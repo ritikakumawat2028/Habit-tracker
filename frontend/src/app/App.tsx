@@ -508,10 +508,12 @@ function AuthProvider({ children }: { children: React.ReactNode }) {
     // 3. Generate Goals
     const newGoals: GoalItem[] = [];
     const gId = () => `plan_g_${Math.random().toString(36).substring(2, 8)}`;
-    if (sel.includes("fitness") || sel.includes("health")) newGoals.push({ id: gId(), title: "Achieve Peak Fitness: Run 5K under 25 mins & lift consistently", category: "Fitness", deadline: "30 Days", progress: 20 });
-    if (sel.includes("coding") || sel.includes("career")) newGoals.push({ id: gId(), title: "Build & Deploy 2 Full-Stack Portfolio Web Applications", category: "Career", deadline: "60 Days", progress: 35 });
-    if (sel.includes("reading") || sel.includes("mental")) newGoals.push({ id: gId(), title: "Read 12 transformative books on leadership, psychology & tech", category: "Reading", deadline: "This Year", progress: 15 });
-    if (sel.includes("productivity") || sel.includes("sleep") || sel.includes("hydration")) newGoals.push({ id: gId(), title: "Maintain 30-day uninterrupted habit & hydration streak", category: "Wellness", deadline: "30 Days", progress: 40 });
+    const dueThirty = new Date(Date.now() + 30 * 86400000).toISOString().split("T")[0];
+    const dueSixty = new Date(Date.now() + 60 * 86400000).toISOString().split("T")[0];
+    if (sel.includes("fitness") || sel.includes("health")) newGoals.push({ id: gId(), title: "Achieve Peak Fitness: Run 5K under 25 mins & lift consistently", timeframe: "quarter", progress: 20, milestones: ["Run 3x weekly", "Daily protein target", "Sleep 8h consistently"], dueDate: dueThirty });
+    if (sel.includes("coding") || sel.includes("career")) newGoals.push({ id: gId(), title: "Build & Deploy 2 Full-Stack Portfolio Web Applications", timeframe: "quarter", progress: 35, milestones: ["System design sketch", "Frontend UI polished", "Backend API deployed"], dueDate: dueSixty });
+    if (sel.includes("reading") || sel.includes("mental")) newGoals.push({ id: gId(), title: "Read 12 transformative books on leadership, psychology & tech", timeframe: "year", progress: 15, milestones: ["Book 1 summary notes", "Daily 30m reading block", "Review quarterly lessons"], dueDate: dueSixty });
+    if (sel.includes("productivity") || sel.includes("sleep") || sel.includes("hydration")) newGoals.push({ id: gId(), title: "Maintain 30-day uninterrupted habit & hydration streak", timeframe: "month", progress: 40, milestones: ["Drink 2L daily", "Morning focus block", "No screens after 11 PM"], dueDate: dueThirty });
     setGoalsList(newGoals); persist("gs_goals", newGoals);
 
     // 4. Generate Learning Roadmap & Courses
@@ -3662,15 +3664,15 @@ function GoalsView() {
 
       {/* Goal items listing */}
       <div className="space-y-4">
-        {goalsList.map(g => (
+        {(goalsList || []).map(g => (
           <Card key={g.id} className="p-5 border-border bg-card flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
             <div className="flex-1">
               <div className="flex items-center gap-2">
                 <h4 className="text-xs font-bold">{g.title}</h4>
-                <span className="text-[9px] bg-primary/10 text-primary border border-primary/20 px-2 py-0.5 rounded-full font-bold uppercase">{g.timeframe}</span>
+                <span className="text-[9px] bg-primary/10 text-primary border border-primary/20 px-2 py-0.5 rounded-full font-bold uppercase">{g.timeframe || (g as any).category || "quarter"}</span>
               </div>
               <div className="flex items-center gap-2 mt-2.5 flex-wrap">
-                {g.milestones.map(m => (
+                {(g.milestones || []).map(m => (
                   <span key={m} className="text-[10px] text-foreground/45 bg-muted px-2.5 py-0.5 rounded-lg border border-border/20 font-medium">✓ {m}</span>
                 ))}
               </div>
@@ -3678,7 +3680,7 @@ function GoalsView() {
             <div className="flex items-center gap-4 w-full md:w-auto">
               <div className="text-right">
                 <span className="text-[10px] text-foreground/40 block">Progress</span>
-                <span className="text-xs font-extrabold text-primary">{g.progress}%</span>
+                <span className="text-xs font-extrabold text-primary">{g.progress || 0}%</span>
               </div>
               <button onClick={() => deleteGoal(g.id)} className="w-8 h-8 rounded-lg bg-muted flex items-center justify-center text-foreground/35 hover:text-red-500 hover:bg-red-500/5 transition-all">
                 <Trash2 size={13} />
