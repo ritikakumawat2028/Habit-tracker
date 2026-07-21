@@ -65,6 +65,9 @@ interface UserData {
   xp: number;
   coins?: number; // GrowCoins gamification currency
   streak: number;
+  longestStreak?: number;
+  lastCheckInDate?: string;
+  streakHistory?: string[];
   joinDate: string;
   goals: string[];
   inviteCode: string;
@@ -763,6 +766,57 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
     });
   }, [user, persist]);
+
+  // ── Daily Streak Check-In Engine ──
+  // Runs once on mount whenever a user is loaded. Compares today's date against
+  // the last recorded check-in date and updates streak accordingly.
+  useEffect(() => {
+    if (!user) return;
+    const today = new Date().toISOString().split("T")[0];
+    const lastDate = user.lastCheckInDate;
+
+    // Already checked in today — nothing to do
+    if (lastDate === today) return;
+
+    setUser(u => {
+      if (!u) return u;
+      const prev = u.lastCheckInDate;
+      let newStreak = u.streak || 0;
+
+      if (!prev) {
+        // First ever visit
+        newStreak = 1;
+      } else {
+        const prevDate = new Date(prev);
+        const todayDate = new Date(today);
+        const diffMs = todayDate.getTime() - prevDate.getTime();
+        const diffDays = Math.round(diffMs / 86400000);
+        if (diffDays === 1) {
+          // Consecutive day — extend streak
+          newStreak = newStreak + 1;
+        } else if (diffDays > 1) {
+          // Missed a day — reset streak
+          newStreak = 1;
+        }
+        // diffDays === 0 means same day (shouldn't reach here due to early return)
+      }
+
+      const history = [...(u.streakHistory || []), today].slice(-30); // keep last 30 days
+      const updated = {
+        ...u,
+        streak: newStreak,
+        longestStreak: Math.max(u.longestStreak || 0, newStreak),
+        lastCheckInDate: today,
+        streakHistory: history,
+      };
+      persist("gs_user", updated);
+      // Sync to backend silently
+      apiFetch("/auth/profile", { method: "PUT", body: JSON.stringify({ streak: newStreak }) }).catch(() => {});
+      return updated;
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id, persist]);
+
 
   const login = useCallback(async (email: string, name?: string) => {
     const serverUser = await apiFetch<UserData>("/auth/login", {
@@ -1748,7 +1802,6 @@ export function DashboardView({ onNavigate, onQuickAdd }: { onNavigate: (v: View
   const habitPct = filteredHabits.length > 0 ? Math.round((doneHabits / filteredHabits.length) * 100) : 0;
   
   const filteredTasks = (filterPlanOnly && activePlan ? tasks.filter(t => t.planId === activePlan.id || !t.planId) : tasks)
-    .slice(0, 6)
     .sort((a, b) => Number(a.done) - Number(b.done));
   const doneTasks = filteredTasks.filter(t => t.done).length;
   const taskPct = filteredTasks.length > 0 ? Math.round((doneTasks / filteredTasks.length) * 100) : 0;
@@ -1845,6 +1898,64 @@ export function DashboardView({ onNavigate, onQuickAdd }: { onNavigate: (v: View
             </div>
           </Card>
         )}
+
+        {/* ROW 1.5: Daily Streak Banner */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+          {/* Streak Counter */}
+          <div className="col-span-2 sm:col-span-1 rounded-2xl bg-gradient-to-br from-orange-500/20 to-amber-400/10 border border-orange-500/25 p-4 flex items-center gap-4 shadow-sm hover:shadow-md transition-all">
+            <div className="w-12 h-12 rounded-xl bg-orange-500/15 flex items-center justify-center flex-shrink-0 text-2xl">
+              🔥
+            </div>
+            <div className="min-w-0">
+              <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Daily Streak</p>
+              <p className="text-2xl font-extrabold font-['Poppins'] text-orange-500">{user.streak} <span className="text-sm font-bold text-muted-foreground">days</span></p>
+              <p className="text-[10px] text-muted-foreground mt-0.5">
+                {user.streak === 0 ? 'Check in today to start! 🚀' : user.streak === 1 ? 'Day 1 — great start! 🌱' : user.streak < 7 ? 'Keep the chain going! 💪' : user.streak < 30 ? 'On fire! Don\'t stop 🏆' : 'Legendary! 👑'}
+              </p>
+            </div>
+          </div>
+
+          {/* Longest Streak */}
+          <div className="rounded-2xl bg-gradient-to-br from-purple-500/15 to-primary/10 border border-primary/20 p-4 flex items-center gap-3 shadow-sm hover:shadow-md transition-all">
+            <div className="w-10 h-10 rounded-xl bg-primary/15 flex items-center justify-center flex-shrink-0 text-xl">🏆</div>
+            <div className="min-w-0">
+              <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Best Streak</p>
+              <p className="text-xl font-extrabold font-['Poppins'] text-primary">{user.longestStreak ?? user.streak}d</p>
+            </div>
+          </div>
+
+          {/* Level & XP */}
+          <div className="rounded-2xl bg-gradient-to-br from-emerald-500/15 to-green-400/10 border border-emerald-500/20 p-4 flex items-center gap-3 shadow-sm hover:shadow-md transition-all">
+            <div className="w-10 h-10 rounded-xl bg-emerald-500/15 flex items-center justify-center flex-shrink-0 text-xl">⚡</div>
+            <div className="min-w-0">
+              <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Level</p>
+              <p className="text-xl font-extrabold font-['Poppins'] text-emerald-600 dark:text-emerald-400">{user.level}</p>
+              <p className="text-[10px] text-muted-foreground">{user.xp} XP total</p>
+            </div>
+          </div>
+
+          {/* 30-Day Streak History Mini-Heatmap */}
+          <div className="rounded-2xl bg-gradient-to-br from-card to-muted/20 border border-border p-4 shadow-sm hover:shadow-md transition-all">
+            <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-2">Last 14 Days</p>
+            <div className="flex gap-1 flex-wrap">
+              {Array.from({ length: 14 }, (_, i) => {
+                const d = new Date();
+                d.setDate(d.getDate() - (13 - i));
+                const dateStr = d.toISOString().split('T')[0];
+                const active = (user.streakHistory || []).includes(dateStr);
+                return (
+                  <div
+                    key={i}
+                    title={dateStr}
+                    className={`w-4 h-4 rounded-sm transition-all ${
+                      active ? 'bg-orange-500 opacity-90 shadow-sm' : 'bg-muted/60'
+                    }`}
+                  />
+                );
+              })}
+            </div>
+          </div>
+        </div>
 
         {/* ROW 2: Daily Progress, Inspiration, & Mood */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
@@ -2008,7 +2119,7 @@ export function DashboardView({ onNavigate, onQuickAdd }: { onNavigate: (v: View
               </button>
             </div>
           </div>
-          <div className="space-y-3">
+          <div className="space-y-3 max-h-[420px] overflow-y-auto pr-1 custom-scrollbar">
             {filteredTasks.length === 0 ? (
               <p className="text-muted-foreground text-xs text-center py-4">No tasks found for this view. Click "New +" to schedule some focus action!</p>
             ) : (
