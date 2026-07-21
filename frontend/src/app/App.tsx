@@ -406,28 +406,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   });
   const [partners, setPartners] = useState<GrowthPartner[]>(() => loadArray("gs_partners", []));
 
-  const [learningSteps, setLearningSteps] = useState<LearningStep[]>(() => loadArray("gs_learning_roadmap", [
-    { step: 1, title: "HTML & CSS basics", desc: "Flexbox, CSS grid, semantic elements", done: true },
-    { step: 2, title: "JavaScript Core ES6+", desc: "Promises, async/await, closures", done: true },
-    { step: 3, title: "React Fundamentals", desc: "Hooks, routing, virtual DOM", done: true },
-    { step: 4, title: "TypeScript Integration", desc: "Types, interfaces, generic parameters", done: false },
-    { step: 5, title: "Full Stack Node/Express", desc: "REST APIs, database queries, JWT auth", done: false }
-  ]));
+  const [learningSteps, setLearningSteps] = useState<LearningStep[]>(() => loadArray("gs_learning_roadmap", []));
 
-  const [learningCourses, setLearningCourses] = useState<LearningCourse[]>(() => loadArray("gs_learning_courses", [
-    { id: "c1", title: "Advanced TypeScript with React", desc: "Level up your generic typing skills · 12 hours", category: "Coding", hours: 12, completed: false },
-    { id: "c2", title: "System Design for Web Developers", desc: "Architecture, scalability, database indexing · 8 hours", category: "Career", hours: 8, completed: false }
-  ]));
+  const [learningCourses, setLearningCourses] = useState<LearningCourse[]>(() => loadArray("gs_learning_courses", []));
 
-  const [careerApps, setCareerApps] = useState<CareerApp[]>(() => loadArray("gs_career_apps", [
-    { id: "ca1", company: "Google", role: "Frontend Engineer", stage: "Onsite Technical", date: "2026-07-22", color: "text-amber-500 bg-amber-500/10" },
-    { id: "ca2", company: "Stripe", role: "Software Engineer", stage: "System Design", date: "2026-07-28", color: "text-indigo-500 bg-indigo-500/10" },
-    { id: "ca3", company: "Vercel", role: "React Engineer", stage: "Resume Review", date: "2026-08-04", color: "text-foreground/50 bg-muted" }
-  ]));
+  const [careerApps, setCareerApps] = useState<CareerApp[]>(() => loadArray("gs_career_apps", []));
 
   const [healthLogs, setHealthLogs] = useState<HealthLog[]>(() => {
     const today = new Date().toISOString().split("T")[0];
-    return loadArray("gs_health_logs", [{ date: today, waterMl: 1500, sleepHours: 7.5, workoutMins: 45, mood: "😊", notes: "Felt energized after morning walk." }]);
+    return loadArray("gs_health_logs", [{ date: today, waterMl: 0, sleepHours: 0, workoutMins: 0, mood: "", notes: "" }]);
   });
 
   const persist = useCallback((key: string, val: unknown) => localStorage.setItem(key, JSON.stringify(val)), []);
@@ -4479,7 +4466,7 @@ export function HealthView() {
 }
 
 export function CareerView() {
-  const { careerApps, addCareerApp, updateCareerAppStage, deleteCareerApp } = useAuth();
+  const { careerApps, addCareerApp, updateCareerAppStage, deleteCareerApp, focusSessions } = useAuth();
   const [showAddModal, setShowAddModal] = useState(false);
   const [company, setCompany] = useState("");
   const [role, setRole] = useState("");
@@ -4487,36 +4474,73 @@ export function CareerView() {
   const [date, setDate] = useState("");
   const [notes, setNotes] = useState("");
 
+  // User-managed skills — stored in localStorage
+  const [skills, setSkills] = useState<{ name: string; level: number }[]>(() => {
+    try { const s = localStorage.getItem("gs_career_skills"); return s ? JSON.parse(s) : []; } catch { return []; }
+  });
+  const [showAddSkill, setShowAddSkill] = useState(false);
+  const [newSkillName, setNewSkillName] = useState("");
+  const [newSkillLevel, setNewSkillLevel] = useState(50);
+
+  const saveSkills = (next: { name: string; level: number }[]) => {
+    setSkills(next);
+    localStorage.setItem("gs_career_skills", JSON.stringify(next));
+  };
+
+  const handleAddSkill = () => {
+    if (!newSkillName.trim()) return;
+    saveSkills([...skills, { name: newSkillName.trim(), level: newSkillLevel }]);
+    setNewSkillName(""); setNewSkillLevel(50); setShowAddSkill(false);
+  };
+
+  const handleDeleteSkill = (idx: number) => saveSkills(skills.filter((_, i) => i !== idx));
+  const handleSkillLevel = (idx: number, val: number) => saveSkills(skills.map((s, i) => i === idx ? { ...s, level: val } : s));
+
   const handleCreateApp = () => {
     if (!company.trim() || !role.trim()) return;
     addCareerApp({ company, role, stage, date: date || "Upcoming", notes });
     setCompany(""); setRole(""); setDate(""); setNotes(""); setShowAddModal(false);
   };
 
-  const commitGrid = Array.from({ length: 7 * 20 }, (_, i) => ({
-    id: i,
-    level: i % 7 === 0 ? 0 : i % 5 === 0 ? 3 : i % 3 === 0 ? 2 : 1
-  }));
+  // Real metrics derived from focusSessions
+  const thisMonth = new Date().toISOString().slice(0, 7); // "2026-07"
+  const monthSessions = focusSessions.filter(s => (s.date || "").startsWith(thisMonth));
+  const totalStudyMins = monthSessions.reduce((acc, s) => acc + (s.duration || 0), 0);
+  const totalStudyHrs = (totalStudyMins / 60).toFixed(1);
+  const codingSessions = monthSessions.filter(s => (s.category || "").toLowerCase().includes("cod")).length;
+  const offers = careerApps.filter(a => a.stage.includes("Offer")).length;
+  const totalApps = careerApps.length;
+  const careerReadiness = totalApps === 0 ? 0 : Math.min(100, Math.round(((offers * 30 + codingSessions * 2 + Number(totalStudyHrs)) / (totalApps * 5 + 50)) * 100));
 
-  const commitColors = [
-    "bg-muted/30 dark:bg-muted/15",
-    "bg-[#F3CCDE]",
-    "bg-[#BA88AE]",
-    "bg-[#5B3765]",
-  ];
+  // Real activity grid — last 140 days of focus sessions
+  const sessionDateMap = new Map<string, number>();
+  focusSessions.forEach(s => {
+    if (s.date) sessionDateMap.set(s.date, (sessionDateMap.get(s.date) || 0) + 1);
+  });
+  const activityGrid = Array.from({ length: 140 }, (_, i) => {
+    const d = new Date();
+    d.setDate(d.getDate() - (139 - i));
+    const dateStr = d.toISOString().split("T")[0];
+    const count = sessionDateMap.get(dateStr) || 0;
+    const level = count === 0 ? 0 : count === 1 ? 1 : count <= 3 ? 2 : 3;
+    return { id: i, level, dateStr, count };
+  });
+  const totalContributions = focusSessions.length;
+
+  const commitColors = ["bg-muted/30 dark:bg-muted/15", "bg-[#F3CCDE]", "bg-[#BA88AE]", "bg-[#5B3765]"];
 
   return (
     <div className="p-7 space-y-6 max-w-4xl mx-auto text-foreground font-['Poppins']">
-      {/* Header with Add Application Button */}
+      {/* Header */}
       <Card className="p-5 border-primary/30 bg-gradient-to-r from-primary/10 to-indigo-500/10 flex justify-between items-center gap-4 flex-wrap">
         <div>
           <h3 className="text-base font-extrabold font-['Plus_Jakarta_Sans']">Career Milestones & Interview Tracker</h3>
-          <p className="text-xs text-foreground/60 mt-0.5">Manage job applications, technical prep, and coding hours.</p>
+          <p className="text-xs text-foreground/60 mt-0.5">Track job applications, skills progress, and study activity.</p>
         </div>
-        <Btn onClick={() => setShowAddModal(true)} variant="primary" className="text-xs py-2">+ Add Job Application / Goal</Btn>
+        <Btn onClick={() => setShowAddModal(true)} variant="primary" className="text-xs py-2">+ Add Job Application</Btn>
       </Card>
 
-      {/* Add Modal */}
+      {/* Add Application Modal */}
       {showAddModal && (
         <Card className="p-5 border-border bg-card space-y-4 animate-fadeIn">
           <div className="flex justify-between items-center border-b border-border/40 pb-2">
@@ -4524,8 +4548,8 @@ export function CareerView() {
             <button onClick={() => setShowAddModal(false)} className="text-xs font-bold text-foreground/40 hover:text-foreground">✕</button>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <Input label="Company / Target Organization" placeholder="e.g. Google, Stripe, Innovate Co" value={company} onChange={e => setCompany(e.target.value)} />
-            <Input label="Target Role" placeholder="e.g. Frontend Engineer, Product Manager" value={role} onChange={e => setRole(e.target.value)} />
+            <Input label="Company / Organization" placeholder="e.g. Google, Stripe" value={company} onChange={e => setCompany(e.target.value)} />
+            <Input label="Target Role" placeholder="e.g. Frontend Engineer" value={role} onChange={e => setRole(e.target.value)} />
             <div>
               <label className="block text-xs font-semibold text-foreground/70 mb-1.5">Current Stage</label>
               <select value={stage} onChange={e => setStage(e.target.value)} className="w-full rounded-xl bg-background border border-border px-3 py-2 text-xs text-foreground font-semibold focus:outline-none focus:border-primary">
@@ -4537,7 +4561,10 @@ export function CareerView() {
                 <option value="Offer Received 🎉">Offer Received 🎉</option>
               </select>
             </div>
-            <Input label="Target Date / Interview Date" placeholder="e.g. Next Tuesday / 2026-08-10" value={date} onChange={e => setDate(e.target.value)} />
+            <Input label="Target / Interview Date" placeholder="e.g. 2026-08-10" value={date} onChange={e => setDate(e.target.value)} />
+            <div className="md:col-span-2">
+              <Input label="Notes (optional)" placeholder="e.g. Referral from John, prepare system design" value={notes} onChange={e => setNotes(e.target.value)} />
+            </div>
           </div>
           <div className="flex justify-end gap-2">
             <Btn onClick={() => setShowAddModal(false)} variant="ghost">Cancel</Btn>
@@ -4546,12 +4573,27 @@ export function CareerView() {
         </Card>
       )}
 
-      {/* Metrics Row */}
+      {/* Live Metrics Row — from real data */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         {[
-          { title: "Study Hours", value: "48.5 hrs", desc: "This Month Progress", percent: 72, color: "bg-primary" },
-          { title: "Coding Sessions", value: "31 cycles", desc: "This Month Progress", percent: 85, color: "bg-accent" },
-          { title: "Career Readiness", value: "82/100", desc: "Growth Score", percent: 82, color: "bg-primary" }
+          {
+            title: "Study Hours", value: `${totalStudyHrs} hrs`,
+            desc: `${monthSessions.length} sessions this month`,
+            percent: Math.min(100, Math.round((Number(totalStudyHrs) / 40) * 100)),
+            color: "bg-primary"
+          },
+          {
+            title: "Coding Sessions", value: `${codingSessions} sessions`,
+            desc: `Coding-tagged focus blocks`,
+            percent: Math.min(100, Math.round((codingSessions / 20) * 100)),
+            color: "bg-accent"
+          },
+          {
+            title: "Applications Active", value: `${totalApps} apps`,
+            desc: `${offers} offer${offers !== 1 ? "s" : ""} received 🎉`,
+            percent: Math.min(100, Math.round((totalApps / 10) * 100)),
+            color: "bg-primary"
+          }
         ].map(item => (
           <Card key={item.title} className="p-5 bg-card border-border shadow-sm flex flex-col justify-between">
             <div>
@@ -4568,22 +4610,21 @@ export function CareerView() {
         ))}
       </div>
 
-      {/* GitHub Contributions Graph Simulation */}
+      {/* Real Focus Activity Grid */}
       <Card className="p-5 border-border bg-card shadow-sm space-y-3">
         <div className="flex justify-between items-center">
           <div>
-            <h4 className="text-xs font-extrabold text-foreground/40 uppercase tracking-widest">Self-Study Coding Activity</h4>
-            <p className="text-xs text-foreground/50 mt-0.5">Mock git commits logged on GrowSync platform</p>
+            <h4 className="text-xs font-extrabold text-foreground/40 uppercase tracking-widest">Focus Session Activity</h4>
+            <p className="text-xs text-foreground/50 mt-0.5">Real study sessions logged on GrowSync — last 140 days</p>
           </div>
-          <span className="text-[10px] text-primary font-bold">142 contributions this season</span>
+          <span className="text-[10px] text-primary font-bold">{totalContributions} total sessions</span>
         </div>
-        
         <div className="flex flex-wrap gap-1 items-center py-2 max-w-full overflow-x-auto">
-          {commitGrid.map(cell => (
+          {activityGrid.map(cell => (
             <div
               key={cell.id}
               className={`w-3.5 h-3.5 rounded-sm transition-all hover:scale-110 ${commitColors[cell.level]}`}
-              title={`Contributions logged level: ${cell.level}`}
+              title={`${cell.dateStr}: ${cell.count} session${cell.count !== 1 ? "s" : ""}`}
             />
           ))}
         </div>
@@ -4598,43 +4639,80 @@ export function CareerView() {
       </Card>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-        {/* Skills Progression */}
+        {/* User-Managed Skills Tracker */}
         <Card className="p-5 border-border bg-card shadow-sm space-y-4">
-          <h3 className="text-xs font-extrabold text-foreground/40 uppercase tracking-widest">Skill Progress</h3>
-          <div className="space-y-4">
-            {[
-              { sk: "Full Stack Architecture", lvl: 85 },
-              { sk: "System Design & Scalability", lvl: 75 },
-              { sk: "Algorithms & Problem Solving", lvl: 80 }
-            ].map(item => (
-              <div key={item.sk}>
-                <div className="flex justify-between mb-1.5">
-                  <span className="text-foreground/80 text-xs font-bold">{item.sk}</span>
-                  <span className="text-primary text-xs font-extrabold font-['Poppins']">{item.lvl}%</span>
-                </div>
-                <div className="h-2 rounded-full bg-muted overflow-hidden">
-                  <div className="h-full rounded-full bg-gradient-to-r from-primary to-accent" style={{ width: `${item.lvl}%` }} />
-                </div>
-              </div>
-            ))}
+          <div className="flex justify-between items-center">
+            <h3 className="text-xs font-extrabold text-foreground/40 uppercase tracking-widest">My Skills</h3>
+            <button onClick={() => setShowAddSkill(v => !v)} className="text-xs text-primary font-bold hover:underline flex items-center gap-1">
+              <Plus size={12} /> Add Skill
+            </button>
           </div>
+
+          {showAddSkill && (
+            <div className="border border-border/50 rounded-xl p-3 space-y-3 bg-muted/20 animate-fadeIn">
+              <Input label="Skill Name" placeholder="e.g. React, Python, SQL" value={newSkillName} onChange={e => setNewSkillName(e.target.value)} />
+              <div>
+                <div className="flex justify-between text-xs font-bold mb-1 text-foreground/60">
+                  <label>Proficiency</label>
+                  <span className="text-primary">{newSkillLevel}%</span>
+                </div>
+                <input type="range" min="5" max="100" step="5" value={newSkillLevel} onChange={e => setNewSkillLevel(Number(e.target.value))} className="w-full accent-primary" />
+              </div>
+              <div className="flex gap-2">
+                <Btn onClick={handleAddSkill} className="flex-1 text-xs py-1.5">Save Skill</Btn>
+                <Btn onClick={() => setShowAddSkill(false)} variant="ghost" className="text-xs py-1.5">Cancel</Btn>
+              </div>
+            </div>
+          )}
+
+          {skills.length === 0 ? (
+            <div className="text-center py-6 space-y-2">
+              <p className="text-2xl">🎯</p>
+              <p className="text-xs text-foreground/40 font-medium">No skills tracked yet.</p>
+              <p className="text-[10px] text-foreground/30">Click "+ Add Skill" to track your technical expertise.</p>
+            </div>
+          ) : (
+            <div className="space-y-4 max-h-[280px] overflow-y-auto pr-1 custom-scrollbar">
+              {skills.map((sk, idx) => (
+                <div key={idx}>
+                  <div className="flex justify-between items-center mb-1.5">
+                    <span className="text-foreground/80 text-xs font-bold truncate flex-1">{sk.name}</span>
+                    <div className="flex items-center gap-2 ml-2">
+                      <span className="text-primary text-xs font-extrabold">{sk.level}%</span>
+                      <button onClick={() => handleDeleteSkill(idx)} className="text-foreground/20 hover:text-red-400 transition-colors"><X size={12} /></button>
+                    </div>
+                  </div>
+                  <input type="range" min="5" max="100" step="5" value={sk.level} onChange={e => handleSkillLevel(idx, Number(e.target.value))} className="w-full accent-primary h-1.5 rounded-full" />
+                </div>
+              ))}
+            </div>
+          )}
         </Card>
 
-        {/* Interview Applications Tracker */}
+        {/* Applications Tracker */}
         <Card className="p-5 border-border bg-card shadow-sm space-y-3">
-          <h3 className="text-xs font-extrabold text-foreground/40 uppercase tracking-widest">Active Applications ({careerApps.length})</h3>
-          <div className="divide-y divide-border/40 space-y-3 pt-1">
+          <div className="flex justify-between items-center">
+            <h3 className="text-xs font-extrabold text-foreground/40 uppercase tracking-widest">Active Applications ({careerApps.length})</h3>
+            {careerApps.length > 0 && (
+              <span className="text-[10px] text-emerald-500 font-bold">{offers} offer{offers !== 1 ? "s" : ""} 🎉</span>
+            )}
+          </div>
+          <div className="divide-y divide-border/40 max-h-[320px] overflow-y-auto custom-scrollbar">
             {careerApps.length === 0 ? (
-              <p className="text-xs text-foreground/40 text-center py-4">No applications tracked yet. Click "+ Add Job Application" above!</p>
+              <div className="text-center py-8 space-y-2">
+                <p className="text-2xl">📋</p>
+                <p className="text-xs text-foreground/40 font-medium">No applications tracked yet.</p>
+                <p className="text-[10px] text-foreground/30">Click "+ Add Job Application" above to start tracking.</p>
+              </div>
             ) : (
               careerApps.map(inv => (
                 <div key={inv.id} className="flex justify-between items-start py-2.5 first:pt-0 last:pb-0 text-xs gap-2">
-                  <div className="flex-1">
-                    <p className="font-extrabold text-foreground/85">{inv.company}</p>
-                    <p className="text-[10px] text-foreground/50 mt-0.5">{inv.role}</p>
-                    {inv.notes && <p className="text-[9px] text-primary/80 mt-1 italic">{inv.notes}</p>}
+                  <div className="flex-1 min-w-0">
+                    <p className="font-extrabold text-foreground/85 truncate">{inv.company}</p>
+                    <p className="text-[10px] text-foreground/50 mt-0.5 truncate">{inv.role}</p>
+                    {inv.notes && <p className="text-[9px] text-primary/80 mt-1 italic truncate">{inv.notes}</p>}
                   </div>
-                  <div className="text-right flex flex-col items-end gap-1.5">
+                  <div className="text-right flex flex-col items-end gap-1.5 flex-shrink-0">
                     <select
                       value={inv.stage}
                       onChange={e => updateCareerAppStage(inv.id, e.target.value)}
@@ -4649,7 +4727,7 @@ export function CareerView() {
                     </select>
                     <div className="flex items-center gap-2">
                       <span className="text-[9px] text-foreground/40 font-medium">{inv.date}</span>
-                      <button onClick={() => deleteCareerApp(inv.id)} className="text-[10px] text-red-400 hover:text-red-500 font-bold" title="Delete application">✕</button>
+                      <button onClick={() => deleteCareerApp(inv.id)} className="text-[10px] text-red-400 hover:text-red-500 font-bold" title="Delete">✕</button>
                     </div>
                   </div>
                 </div>
@@ -4658,7 +4736,6 @@ export function CareerView() {
           </div>
         </Card>
       </div>
-
     </div>
   );
 }
@@ -4789,9 +4866,13 @@ export function GoalsView() {
         <h3 className="text-xs font-extrabold text-primary uppercase tracking-widest mb-2">My vision board</h3>
         <p className="text-xs text-foreground/50 mb-3">Jot down keywords or pictures that inspire you to accomplish your quarterly milestones.</p>
         <div className="flex gap-3 flex-wrap">
-          {["Read 24 Books 📚", "Master React Native 📱", "Run 100km 🏃", "Stay hydrated 💧"].map(v => (
-            <span key={v} className="bg-card px-3.5 py-2 rounded-2xl border border-border shadow-sm text-xs font-bold text-foreground/80">{v}</span>
-          ))}
+          {goalsList.length > 0 ? (
+            goalsList.map(g => (
+              <span key={g.id} className="bg-card px-3.5 py-2 rounded-2xl border border-border shadow-sm text-xs font-bold text-foreground/80">{g.title}</span>
+            ))
+          ) : (
+             <span className="text-xs text-foreground/40 italic">Add some goals below to build your vision board!</span>
+          )}
         </div>
       </Card>
 
