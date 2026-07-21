@@ -20,6 +20,11 @@ app.use(express.json());
 // Register API router
 app.use('/api', apiRouter);
 
+// Root endpoint for friendly greeting
+app.get('/', (req, res) => {
+  res.send('GrowSync Backend is running! Access /health-check to verify status or /api for endpoints.');
+});
+
 // Health check endpoint
 app.get('/health-check', (req, res) => {
   res.json({ status: 'ok', time: new Date() });
