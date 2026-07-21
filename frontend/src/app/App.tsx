@@ -680,6 +680,7 @@ const dotColorMap: Record<string, string> = {
 ══════════════════════════════════════════ */
 function LandingPage({ onNavigate }: { onNavigate: (v: View) => void }) {
   const { dark } = useTheme();
+  const { user } = useAuth();
   return (
     <div className="min-h-screen bg-background overflow-hidden relative flex flex-col">
       <div className="absolute inset-0 overflow-hidden pointer-events-none">
@@ -695,8 +696,14 @@ function LandingPage({ onNavigate }: { onNavigate: (v: View) => void }) {
         </div>
         <div className="flex items-center gap-3">
           <ThemeToggle />
-          <Btn variant="ghost" onClick={() => onNavigate("login")}>Log in</Btn>
-          <Btn onClick={() => onNavigate("login")}>Get Started</Btn>
+          {user ? (
+            <Btn onClick={() => onNavigate("dashboard")}>Go to Dashboard</Btn>
+          ) : (
+            <>
+              <Btn variant="ghost" onClick={() => onNavigate("login")}>Log in</Btn>
+              <Btn onClick={() => onNavigate("login")}>Get Started</Btn>
+            </>
+          )}
         </div>
       </nav>
       <div className="relative z-10 flex flex-col items-center text-center px-4 pt-24 pb-16">
@@ -706,7 +713,9 @@ function LandingPage({ onNavigate }: { onNavigate: (v: View) => void }) {
         </h1>
         <p className="mt-6 text-lg text-foreground/50 max-w-xl leading-relaxed">The self-improvement platform that gamifies habits, tracks wellness, and keeps you accountable with friends.</p>
         <div className="mt-10 flex flex-wrap gap-4 justify-center">
-          <Btn onClick={() => onNavigate("login")} className="px-8 py-4 text-base">Start Growing Free <ArrowRight size={18} /></Btn>
+          <Btn onClick={() => onNavigate(user ? "dashboard" : "login")} className="px-8 py-4 text-base">
+            {user ? "Go to Dashboard" : "Start Growing Free"} <ArrowRight size={18} />
+          </Btn>
         </div>
         <div className="mt-16 grid grid-cols-3 gap-16">
           {[["47k+", "Active Growers"], ["2.3M", "Habits Tracked"], ["94%", "Streak Rate"]].map(([n, l]) => (
@@ -732,10 +741,10 @@ function AuthPage({ onNavigate }: { onNavigate: (v: View) => void }) {
   const [email, setEmail] = useState("");
   const [err, setErr] = useState("");
 
-  const submit = () => {
+  const submit = async () => {
     if (!email.includes("@")) { setErr("Enter a valid email."); return; }
     if (mode === "signup" && !name.trim()) { setErr("Enter your name."); return; }
-    login(email, name || undefined);
+    await login(email, name || undefined);
     onNavigate(mode === "signup" ? "onboarding" : "dashboard");
   };
 
