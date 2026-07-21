@@ -163,7 +163,6 @@ interface GrowthPartner {
   tasks: { title: string; done: boolean; priority: string }[];
   weekProgress: number[];
   inviteCode: string;
-  // Real stats from partner's account
   healthScore?: number;
   careerScore?: number;
   productivityScore?: number;
@@ -184,6 +183,41 @@ interface GrowthPartner {
   weeklyGoalsTotal?: number;
   monthlyGoalsDone?: number;
   monthlyGoalsTotal?: number;
+}
+
+interface LearningStep {
+  step: number;
+  title: string;
+  desc: string;
+  done: boolean;
+}
+
+interface LearningCourse {
+  id: string;
+  title: string;
+  desc: string;
+  category: string;
+  hours: number;
+  completed: boolean;
+}
+
+interface CareerApp {
+  id: string;
+  company: string;
+  role: string;
+  stage: string;
+  date: string;
+  notes?: string;
+  color: string;
+}
+
+interface HealthLog {
+  date: string;
+  waterMl: number;
+  sleepHours: number;
+  workoutMins: number;
+  mood: string;
+  notes?: string;
 }
 
 /* ══════════════════════════════════════════
@@ -243,6 +277,19 @@ const AuthCtx = createContext<{
   partners: GrowthPartner[];
   addPartner: (code: string) => Promise<{ ok: boolean; error?: string; partner?: GrowthPartner }>;
   removePartner: (id: string) => void | Promise<void>;
+  learningSteps: LearningStep[];
+  toggleLearningStep: (stepIdx: number) => void;
+  addLearningStep: (s: { title: string; desc: string }) => void;
+  learningCourses: LearningCourse[];
+  addLearningCourse: (c: Omit<LearningCourse, "id" | "completed">) => void;
+  toggleCourseComplete: (id: string) => void;
+  careerApps: CareerApp[];
+  addCareerApp: (a: Omit<CareerApp, "id" | "color"> & { color?: string }) => void;
+  updateCareerAppStage: (id: string, stage: string) => void;
+  deleteCareerApp: (id: string) => void;
+  healthLogs: HealthLog[];
+  updateTodayHealth: (patch: Partial<HealthLog>) => void;
+  generateCustomPlan: (categories: string[]) => void;
 }>({
   user: null, login: () => {}, logout: () => {}, updateUser: () => {},
   tasks: [], addTask: () => {}, updateTask: () => {}, deleteTask: () => {},
@@ -255,6 +302,10 @@ const AuthCtx = createContext<{
   rewards: [], buyReward: () => false,
   coins: 0, addCoins: () => {},
   partners: [], addPartner: async () => ({ ok: false }), removePartner: () => {},
+  learningSteps: [], toggleLearningStep: () => {}, addLearningStep: () => {},
+  learningCourses: [], addLearningCourse: () => {}, toggleCourseComplete: () => {},
+  careerApps: [], addCareerApp: () => {}, updateCareerAppStage: () => {}, deleteCareerApp: () => {},
+  healthLogs: [], updateTodayHealth: () => {}, generateCustomPlan: () => {},
 });
 
 function AuthProvider({ children }: { children: React.ReactNode }) {
@@ -316,7 +367,215 @@ function AuthProvider({ children }: { children: React.ReactNode }) {
     return saved ? JSON.parse(saved) : [];
   });
 
+  const [learningSteps, setLearningSteps] = useState<LearningStep[]>(() => {
+    const saved = localStorage.getItem("gs_learning_roadmap");
+    return saved ? JSON.parse(saved) : [
+      { step: 1, title: "HTML & CSS basics", desc: "Flexbox, CSS grid, semantic elements", done: true },
+      { step: 2, title: "JavaScript Core ES6+", desc: "Promises, async/await, closures", done: true },
+      { step: 3, title: "React Fundamentals", desc: "Hooks, routing, virtual DOM", done: true },
+      { step: 4, title: "TypeScript Integration", desc: "Types, interfaces, generic parameters", done: false },
+      { step: 5, title: "Full Stack Node/Express", desc: "REST APIs, database queries, JWT auth", done: false }
+    ];
+  });
+
+  const [learningCourses, setLearningCourses] = useState<LearningCourse[]>(() => {
+    const saved = localStorage.getItem("gs_learning_courses");
+    return saved ? JSON.parse(saved) : [
+      { id: "c1", title: "Advanced TypeScript with React", desc: "Level up your generic typing skills · 12 hours", category: "Coding", hours: 12, completed: false },
+      { id: "c2", title: "System Design for Web Developers", desc: "Architecture, scalability, database indexing · 8 hours", category: "Career", hours: 8, completed: false }
+    ];
+  });
+
+  const [careerApps, setCareerApps] = useState<CareerApp[]>(() => {
+    const saved = localStorage.getItem("gs_career_apps");
+    return saved ? JSON.parse(saved) : [
+      { id: "ca1", company: "Google", role: "Frontend Engineer", stage: "Onsite Technical", date: "2026-07-22", color: "text-amber-500 bg-amber-500/10" },
+      { id: "ca2", company: "Stripe", role: "Software Engineer", stage: "System Design", date: "2026-07-28", color: "text-indigo-500 bg-indigo-500/10" },
+      { id: "ca3", company: "Vercel", role: "React Engineer", stage: "Resume Review", date: "2026-08-04", color: "text-foreground/50 bg-muted" }
+    ];
+  });
+
+  const [healthLogs, setHealthLogs] = useState<HealthLog[]>(() => {
+    const saved = localStorage.getItem("gs_health_logs");
+    const today = new Date().toISOString().split("T")[0];
+    return saved ? JSON.parse(saved) : [{ date: today, waterMl: 1500, sleepHours: 7.5, workoutMins: 45, mood: "😊", notes: "Felt energized after morning walk." }];
+  });
+
   const persist = useCallback((key: string, val: unknown) => localStorage.setItem(key, JSON.stringify(val)), []);
+
+  const toggleLearningStep = useCallback((stepIdx: number) => {
+    setLearningSteps(prev => {
+      const next = prev.map((s, i) => i === stepIdx ? { ...s, done: !s.done } : s);
+      persist("gs_learning_roadmap", next);
+      return next;
+    });
+  }, [persist]);
+
+  const addLearningStep = useCallback((s: { title: string; desc: string }) => {
+    setLearningSteps(prev => {
+      const next = [...prev, { step: prev.length + 1, title: s.title, desc: s.desc, done: false }];
+      persist("gs_learning_roadmap", next);
+      return next;
+    });
+  }, [persist]);
+
+  const addLearningCourse = useCallback((c: Omit<LearningCourse, "id" | "completed">) => {
+    setLearningCourses(prev => {
+      const next = [...prev, { ...c, id: `lc_${Date.now()}`, completed: false }];
+      persist("gs_learning_courses", next);
+      return next;
+    });
+  }, [persist]);
+
+  const toggleCourseComplete = useCallback((id: string) => {
+    setLearningCourses(prev => {
+      const next = prev.map(c => c.id === id ? { ...c, completed: !c.completed } : c);
+      persist("gs_learning_courses", next);
+      return next;
+    });
+  }, [persist]);
+
+  const addCareerApp = useCallback((a: Omit<CareerApp, "id" | "color"> & { color?: string }) => {
+    setCareerApps(prev => {
+      const colors = ["text-amber-500 bg-amber-500/10", "text-indigo-500 bg-indigo-500/10", "text-emerald-500 bg-emerald-500/10", "text-purple-500 bg-purple-500/10"];
+      const chosenColor = a.color || colors[prev.length % colors.length];
+      const next = [...prev, { ...a, id: `app_${Date.now()}`, color: chosenColor }];
+      persist("gs_career_apps", next);
+      return next;
+    });
+  }, [persist]);
+
+  const updateCareerAppStage = useCallback((id: string, stage: string) => {
+    setCareerApps(prev => {
+      const next = prev.map(a => a.id === id ? { ...a, stage } : a);
+      persist("gs_career_apps", next);
+      return next;
+    });
+  }, [persist]);
+
+  const deleteCareerApp = useCallback((id: string) => {
+    setCareerApps(prev => {
+      const next = prev.filter(a => a.id !== id);
+      persist("gs_career_apps", next);
+      return next;
+    });
+  }, [persist]);
+
+  const updateTodayHealth = useCallback((patch: Partial<HealthLog>) => {
+    const today = new Date().toISOString().split("T")[0];
+    setHealthLogs(prev => {
+      const existingIdx = prev.findIndex(l => l.date === today);
+      let next: HealthLog[];
+      if (existingIdx >= 0) {
+        next = prev.map((l, i) => i === existingIdx ? { ...l, ...patch } : l);
+      } else {
+        next = [{ date: today, waterMl: 0, sleepHours: 7, workoutMins: 0, mood: "😊", ...patch }, ...prev];
+      }
+      persist("gs_health_logs", next);
+      return next;
+    });
+  }, [persist]);
+
+  const generateCustomPlan = useCallback((categories: string[]) => {
+    const sel = categories.length > 0 ? categories : ["fitness", "coding", "reading", "career", "hydration", "sleep", "mental", "productivity"];
+    const nowStr = new Date().toLocaleDateString("en-US", { month: "short", day: "numeric" });
+    const tId = () => `plan_t_${Math.random().toString(36).substring(2, 8)}`;
+    
+    // 1. Generate Tasks
+    const newTasks: Task[] = [];
+    if (sel.includes("fitness") || sel.includes("health")) {
+      newTasks.push({ id: tId(), title: "Complete 30-min full body workout or cardio interval", priority: "High", category: "Fitness", done: false, createdAt: nowStr, checklist: [{ id: "c1", text: "5-min dynamic warmup", done: true }, { id: "c2", text: "20-min resistance training", done: false }, { id: "c3", text: "5-min cool down stretch", done: false }] });
+      newTasks.push({ id: tId(), title: "Meal prep clean, high-protein nutrition for the next 3 days", priority: "Medium", category: "Nutrition", done: false, createdAt: nowStr });
+    }
+    if (sel.includes("coding") || sel.includes("career")) {
+      newTasks.push({ id: tId(), title: "Solve 2 LeetCode algorithm challenges (Arrays / Dynamic Programming)", priority: "High", category: "Coding", done: false, createdAt: nowStr, checklist: [{ id: "c1", text: "Write optimal solution without hints", done: false }, { id: "c2", text: "Analyze time and space complexity", done: false }] });
+      newTasks.push({ id: tId(), title: "Update GitHub portfolio & refine LinkedIn experience bullets", priority: "High", category: "Career", done: false, createdAt: nowStr });
+    }
+    if (sel.includes("reading") || sel.includes("mental")) {
+      newTasks.push({ id: tId(), title: "Read 25 pages of non-fiction book without phone distractions", priority: "Medium", category: "Reading", done: false, createdAt: nowStr });
+      newTasks.push({ id: tId(), title: "Complete 15-minute guided breathwork and journaling reflection", priority: "High", category: "Mental", done: false, createdAt: nowStr });
+    }
+    if (sel.includes("productivity") || sel.includes("sleep") || sel.includes("hydration") || sel.includes("selfcare")) {
+      newTasks.push({ id: tId(), title: "Review tomorrow's top 3 strategic priorities before finishing day", priority: "High", category: "Productivity", done: false, createdAt: nowStr });
+      newTasks.push({ id: tId(), title: "Disconnect from all digital screens 45 minutes before bedtime", priority: "Medium", category: "Wellness", done: false, createdAt: nowStr });
+      newTasks.push({ id: tId(), title: "Keep 1.5L water bottle on desk and refill at noon", priority: "High", category: "Health", done: false, createdAt: nowStr });
+    }
+    if (newTasks.length === 0) {
+      newTasks.push({ id: tId(), title: "Complete your first daily focus session and review habit streak", priority: "High", category: "Growth", done: false, createdAt: nowStr });
+    }
+    setTasks(newTasks); persist("gs_tasks", newTasks);
+
+    // 2. Generate Habits
+    const newHabits: Habit[] = [];
+    if (sel.includes("fitness") || sel.includes("health")) newHabits.push({ id: 101, name: "Daily Gym / Exercise", category: "Fitness", icon: "🏋️", streak: 1, rewardXp: 50, frequency: "Daily", completedToday: false });
+    if (sel.includes("hydration") || sel.includes("health")) newHabits.push({ id: 102, name: "Drink 2.5L Water", category: "Health", icon: "💧", streak: 2, rewardXp: 30, frequency: "Daily", completedToday: false });
+    if (sel.includes("coding")) newHabits.push({ id: 103, name: "Code & Build Projects 1h", category: "Coding", icon: "💻", streak: 3, rewardXp: 60, frequency: "Daily", completedToday: false });
+    if (sel.includes("reading")) newHabits.push({ id: 104, name: "Read 20+ Minutes", category: "Reading", icon: "📚", streak: 1, rewardXp: 35, frequency: "Daily", completedToday: false });
+    if (sel.includes("sleep")) newHabits.push({ id: 105, name: "8+ Hours Quality Sleep", category: "Sleep", icon: "😴", streak: 4, rewardXp: 40, frequency: "Daily", completedToday: false });
+    if (sel.includes("mental") || sel.includes("selfcare")) newHabits.push({ id: 106, name: "Mindfulness & Meditation", category: "Mental", icon: "🧘", streak: 2, rewardXp: 35, frequency: "Daily", completedToday: false });
+    if (sel.includes("career")) newHabits.push({ id: 107, name: "Network & Career Skill Prep", category: "Career", icon: "📈", streak: 1, rewardXp: 45, frequency: "Weekdays", completedToday: false });
+    if (sel.includes("productivity")) newHabits.push({ id: 108, name: "Plan Top 3 Daily Goals", category: "Productivity", icon: "⚡", streak: 5, rewardXp: 40, frequency: "Daily", completedToday: false });
+    if (newHabits.length === 0) {
+      newHabits.push({ id: 109, name: "Daily Habit Consistency Check", category: "Growth", icon: "🚀", streak: 1, rewardXp: 40, frequency: "Daily", completedToday: false });
+    }
+    setHabits(newHabits); persist("gs_habits", newHabits);
+
+    // 3. Generate Goals
+    const newGoals: GoalItem[] = [];
+    const gId = () => `plan_g_${Math.random().toString(36).substring(2, 8)}`;
+    if (sel.includes("fitness") || sel.includes("health")) newGoals.push({ id: gId(), title: "Achieve Peak Fitness: Run 5K under 25 mins & lift consistently", category: "Fitness", deadline: "30 Days", progress: 20 });
+    if (sel.includes("coding") || sel.includes("career")) newGoals.push({ id: gId(), title: "Build & Deploy 2 Full-Stack Portfolio Web Applications", category: "Career", deadline: "60 Days", progress: 35 });
+    if (sel.includes("reading") || sel.includes("mental")) newGoals.push({ id: gId(), title: "Read 12 transformative books on leadership, psychology & tech", category: "Reading", deadline: "This Year", progress: 15 });
+    if (sel.includes("productivity") || sel.includes("sleep") || sel.includes("hydration")) newGoals.push({ id: gId(), title: "Maintain 30-day uninterrupted habit & hydration streak", category: "Wellness", deadline: "30 Days", progress: 40 });
+    setGoalsList(newGoals); persist("gs_goals", newGoals);
+
+    // 4. Generate Learning Roadmap & Courses
+    const newRoadmap: LearningStep[] = [
+      { step: 1, title: "Fundamentals & Foundation Mastery", desc: "Core concepts, architecture principles, and daily routines setup", done: true },
+      { step: 2, title: "Deep Practice & Skill Acquisition", desc: "Structured exercises, algorithm practice, and focused deep work blocks", done: true },
+      { step: 3, title: "Real-World Project Building", desc: "Applying skills to production-ready projects and tangible milestones", done: false },
+      { step: 4, title: "Optimization & Advanced Techniques", desc: "Performance tuning, system design, and expert-level best practices", done: false },
+      { step: 5, title: "Mastery Certification & Mentorship", desc: "Publishing work, mentoring peers, and securing top-tier career opportunities", done: false }
+    ];
+    setLearningSteps(newRoadmap); persist("gs_learning_roadmap", newRoadmap);
+
+    const newCourses: LearningCourse[] = [
+      { id: "lc_1", title: "Mastering Full-Stack Systems & Architecture", desc: "Level up your technical skills with scalable patterns · 14 hours", category: "Coding", hours: 14, completed: false },
+      { id: "lc_2", title: "Peak Productivity & Deep Work Protocol", desc: "Eliminate distractions and double your daily output · 6 hours", category: "Productivity", hours: 6, completed: false },
+      { id: "lc_3", title: "Science of Fitness, Nutrition & Sleep Optimization", desc: "Evidence-based protocols for lasting energy and recovery · 8 hours", category: "Health", hours: 8, completed: false }
+    ];
+    setLearningCourses(newCourses); persist("gs_learning_courses", newCourses);
+
+    // 5. Generate Career Applications
+    const newApps: CareerApp[] = [
+      { id: "ca_1", company: "Target Tech Leaders", role: "Senior Frontend Engineer", stage: "Onsite Technical", date: "Next Week", notes: "Review React concurrency & system design", color: "text-amber-500 bg-amber-500/10" },
+      { id: "ca_2", company: "Innovate AI Systems", role: "Full Stack Developer", stage: "System Design", date: "In 2 Weeks", notes: "Prep database schema design", color: "text-indigo-500 bg-indigo-500/10" },
+      { id: "ca_3", company: "NextGen Cloud Labs", role: "Software Engineer", stage: "Resume Review", date: "Ongoing", notes: "Refined resume metrics submitted", color: "text-emerald-500 bg-emerald-500/10" }
+    ];
+    setCareerApps(newApps); persist("gs_career_apps", newApps);
+
+    // 6. Generate Starter Journal Entry
+    const starterJournal: JournalEntry = {
+      id: `j_${Date.now()}`,
+      date: new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }),
+      mood: "🔥",
+      wins: `Created my custom personalized plan focused on: ${sel.join(", ")}. Ready to make measurable progress across every area!`,
+      challenges: "Overcoming old procrastination habits and maintaining strict daily focus.",
+      gratitude: "Grateful for the tools, clarity, and determination to elevate my habits and career.",
+      lessons: "Consistency is the ultimate competitive advantage. Action cures self-doubt."
+    };
+    setJournals([starterJournal]); persist("gs_journals", [starterJournal]);
+
+    // 7. Generate Starter Note
+    const starterNote: Note = {
+      id: `n_${Date.now()}`,
+      title: "🌟 My Tailored Master Growth Plan",
+      content: `Welcome to your Custom Growth Plan tailored to: ${sel.join(", ").toUpperCase()}.\n\n✅ Daily Game Plan:\n• Morning: Check off habits & complete workout/hydration targets.\n• Afternoon: Focus on priority tasks & coding/learning milestones.\n• Evening: Log reflection in Journal & review sleep metrics.\n\nEverything in GrowSync is fully connected. Click '+ Add Custom Item' in any view to expand your plan anytime!`,
+      category: "Master Plan",
+      createdAt: nowStr
+    };
+    setNotes([starterNote]); persist("gs_notes", [starterNote]);
+  }, [persist]);
 
   // ── Sync from backend on mount ──
   useEffect(() => {
@@ -636,7 +895,7 @@ function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [persist]);
 
   return (
-    <AuthCtx.Provider value={{ user, login, logout, updateUser, tasks, addTask, updateTask, deleteTask, notes, addNote, updateNote, deleteNote, habits, addHabit, updateHabit, deleteHabit, goalsList, addGoal, updateGoal, deleteGoal, journals, addJournal, focusSessions, addFocusSession, missions, toggleMission, rewards, buyReward, coins, addCoins, partners, addPartner, removePartner }}>
+    <AuthCtx.Provider value={{ user, login, logout, updateUser, tasks, addTask, updateTask, deleteTask, notes, addNote, updateNote, deleteNote, habits, addHabit, updateHabit, deleteHabit, goalsList, addGoal, updateGoal, deleteGoal, journals, addJournal, focusSessions, addFocusSession, missions, toggleMission, rewards, buyReward, coins, addCoins, partners, addPartner, removePartner, learningSteps, toggleLearningStep, addLearningStep, learningCourses, addLearningCourse, toggleCourseComplete, careerApps, addCareerApp, updateCareerAppStage, deleteCareerApp, healthLogs, updateTodayHealth, generateCustomPlan }}>
       {children}
     </AuthCtx.Provider>
   );
@@ -934,7 +1193,7 @@ const goalCategories = [
 ];
 
 function OnboardingPage({ onNavigate }: { onNavigate: (v: View) => void }) {
-  const { updateUser } = useAuth();
+  const { updateUser, generateCustomPlan } = useAuth();
   const [selected, setSelected] = useState<string[]>([]);
   const toggle = (id: string) => setSelected(s => s.includes(id) ? s.filter(x => x !== id) : [...s, id]);
 
@@ -947,7 +1206,7 @@ function OnboardingPage({ onNavigate }: { onNavigate: (v: View) => void }) {
             <Target size={26} className="text-white" />
           </div>
           <h1 className="text-3xl font-extrabold text-foreground font-['Plus_Jakarta_Sans']">What do you want to improve?</h1>
-          <p className="text-foreground/40 mt-2 text-sm">Choose multiple — we will personalize your experience.</p>
+          <p className="text-foreground/40 mt-2 text-sm">Choose multiple — we will personalize your experience across all features.</p>
         </div>
         <div className="grid grid-cols-2 gap-3">
           {goalCategories.map(c => {
@@ -962,10 +1221,10 @@ function OnboardingPage({ onNavigate }: { onNavigate: (v: View) => void }) {
             );
           })}
         </div>
-        <Btn onClick={() => { updateUser({ goals: selected }); onNavigate("dashboard"); }} disabled={selected.length === 0} className="mt-6 w-full py-4 text-base">
-          Start My Journey <ArrowRight size={18} />
+        <Btn onClick={() => { updateUser({ goals: selected }); generateCustomPlan(selected); onNavigate("dashboard"); }} disabled={selected.length === 0} className="mt-6 w-full py-4 text-base">
+          Start My Custom Journey <ArrowRight size={18} />
         </Btn>
-        <p className="text-center text-foreground/25 text-xs mt-3">{selected.length} selected</p>
+        <p className="text-center text-foreground/25 text-xs mt-3">{selected.length} selected · Builds personalized plan across Tasks, Habits, Goals, Learning & Journal</p>
       </div>
     </div>
   );
@@ -1263,7 +1522,7 @@ const activityData = [
 ];
 
 function DashboardView({ onNavigate, onQuickAdd }: { onNavigate: (v: View) => void; onQuickAdd: () => void }) {
-  const { user, tasks, updateTask, habits, updateHabit, partners, coins, addCoins } = useAuth();
+  const { user, tasks, updateTask, habits, updateHabit, partners, coins, addCoins, generateCustomPlan, updateUser } = useAuth();
   
   // Local state for dashboard widgets
   const [mood, setMood] = useState("good");
@@ -1271,6 +1530,9 @@ function DashboardView({ onNavigate, onQuickAdd }: { onNavigate: (v: View) => vo
   const [sleepHours, setSleepHours] = useState(7.5);
   const [quickMemo, setQuickMemo] = useState("");
   const [activeChallenge, setActiveChallenge] = useState("Run 5km with Jordan");
+  const [showPlanModal, setShowPlanModal] = useState(false);
+  const [planCategories, setPlanCategories] = useState<string[]>(user?.goals || ["fitness", "coding", "productivity"]);
+  const togglePlanCat = (id: string) => setPlanCategories(s => s.includes(id) ? s.filter(x => x !== id) : [...s, id]);
   
   // Mini Pomodoro State inside dashboard
   const [pomoSecs, setPomoSecs] = useState(25 * 60);
@@ -1385,6 +1647,68 @@ function DashboardView({ onNavigate, onQuickAdd }: { onNavigate: (v: View) => vo
             ))}
           </div>
         </Card>
+
+        {/* ROW 1.8: Custom Master Plan Generator Banner */}
+        <Card className="p-5 border-primary/30 bg-gradient-to-r from-primary/10 via-pink-500/10 to-purple-500/10 shadow-sm flex flex-col md:flex-row items-center justify-between gap-4">
+          <div className="space-y-1">
+            <div className="flex items-center gap-2">
+              <span className="bg-primary text-white text-[10px] font-extrabold px-2.5 py-0.5 rounded-full uppercase tracking-wider">All-in-One Plan Engine</span>
+              <h3 className="text-sm font-extrabold font-['Plus_Jakarta_Sans'] text-foreground">Personalized Master Growth Plan</h3>
+            </div>
+            <p className="text-xs text-foreground/60 leading-relaxed">
+              Tailor and populate every feature (<strong className="text-primary">Tasks, Habits, Goals, Learning Courses, Career Milestones & Journal Prompts</strong>) based on your custom goals.
+            </p>
+          </div>
+          <div className="flex items-center gap-2 flex-shrink-0">
+            <Btn onClick={() => setShowPlanModal(true)} variant="primary" className="text-xs py-2.5 shadow-sm">
+              <Settings size={14} /> Customize Master Plan
+            </Btn>
+          </div>
+        </Card>
+
+        {showPlanModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-fadeIn">
+            <Card className="max-w-lg w-full p-6 space-y-5 bg-card border-border relative max-h-[90vh] overflow-y-auto shadow-2xl">
+              <div className="flex items-center justify-between border-b border-border/40 pb-3">
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded-xl bg-primary/10 text-primary flex items-center justify-center"><Target size={18} /></div>
+                  <h3 className="font-extrabold text-base text-foreground">Configure Master Growth Plan</h3>
+                </div>
+                <button onClick={() => setShowPlanModal(false)} className="text-foreground/40 hover:text-foreground font-bold text-lg">✕</button>
+              </div>
+              <p className="text-xs text-foreground/60 leading-relaxed">
+                Select your focus categories below. Generating a plan will automatically build a tailored roadmap across all sections of GrowSync so you never run out of direction.
+              </p>
+              <div className="grid grid-cols-2 gap-2">
+                {goalCategories.map(c => {
+                  const sel = planCategories.includes(c.id);
+                  return (
+                    <button key={c.id} type="button" onClick={() => togglePlanCat(c.id)}
+                      className={`flex items-center gap-2.5 p-3 rounded-xl border text-left transition-all text-xs font-semibold ${sel ? "border-primary bg-primary/10 text-foreground" : "border-border text-foreground/60 hover:bg-muted"}`}>
+                      <span className="text-primary">{c.icon}</span>
+                      <span className="flex-1 truncate">{c.label}</span>
+                      {sel && <Check size={14} className="text-primary flex-shrink-0" />}
+                    </button>
+                  );
+                })}
+              </div>
+              <div className="flex items-center justify-between gap-3 pt-3 border-t border-border/40">
+                <button type="button" onClick={() => setPlanCategories(goalCategories.map(g => g.id))} className="text-xs text-primary font-bold hover:underline">Select All Categories</button>
+                <div className="flex gap-2">
+                  <Btn onClick={() => setShowPlanModal(false)} variant="ghost" className="text-xs">Cancel</Btn>
+                  <Btn onClick={() => {
+                    updateUser({ goals: planCategories });
+                    generateCustomPlan(planCategories);
+                    setShowPlanModal(false);
+                    alert("✅ Master Custom Plan Generated! All Tasks, Habits, Goals, Learning & Career plans have been updated.");
+                  }} variant="primary" className="text-xs">
+                    ✨ Generate Master Plan
+                  </Btn>
+                </div>
+              </div>
+            </Card>
+          </div>
+        )}
 
         {/* ROW 2: Daily Tasks Beautiful Checklist */}
         <Card className="p-5 border-border shadow-sm space-y-4">
@@ -2923,41 +3247,81 @@ function HabitsView() {
 }
 
 function HealthView() {
-  const [water, setWater] = useState(5);
-  const [mood, setMood] = useState("good");
+  const { healthLogs, updateTodayHealth } = useAuth();
+  const todayLog = healthLogs[0] || { date: new Date().toISOString().split("T")[0], waterMl: 1500, sleepHours: 7.5, workoutMins: 45, mood: "😊", notes: "" };
+  const [waterCups, setWaterCups] = useState(Math.round((todayLog.waterMl || 0) / 250));
+  const [sleep, setSleep] = useState(todayLog.sleepHours || 7.5);
+  const [mood, setMood] = useState(todayLog.mood || "good");
+  const [notes, setNotes] = useState(todayLog.notes || "");
+
+  const handleUpdateWater = (cups: number) => {
+    setWaterCups(cups);
+    updateTodayHealth({ waterMl: cups * 250 });
+  };
+
+  const handleSaveNotes = () => {
+    updateTodayHealth({ sleepHours: sleep, mood, notes });
+    alert("✅ Health metrics and reflection saved for today!");
+  };
+
   return (
-    <div className="p-7 space-y-6">
+    <div className="p-7 space-y-6 max-w-4xl mx-auto font-['Poppins']">
       <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-        <Card className="p-5">
-          <div className="flex items-center gap-2 mb-4"><Droplets className="text-cyan-400" size={18} /><h3 className="text-foreground font-bold">Hydration</h3></div>
-          <div className="flex items-end justify-between mb-3"><span className="text-4xl font-extrabold text-foreground font-['Plus_Jakarta_Sans']">{water}<span className="text-lg text-foreground/30">/8</span></span><span className="text-cyan-400 text-sm">glasses</span></div>
-          <div className="flex gap-1.5 mb-4">{Array.from({ length: 8 }).map((_, i) => <button key={i} onClick={() => setWater(i + 1)} className={`flex-1 h-6 rounded-md transition-all ${i < water ? "bg-cyan-500" : "bg-muted hover:bg-muted/80"}`} />)}</div>
-          <div className="flex gap-2"><Btn variant="ghost" onClick={() => setWater(w => Math.max(0, w - 1))} className="flex-1">−</Btn><Btn variant="outline" onClick={() => setWater(w => Math.min(8, w + 1))} className="flex-1 text-cyan-400">+ Glass</Btn></div>
-        </Card>
-        <Card className="p-5">
-          <div className="flex items-center gap-2 mb-4"><Moon className="text-indigo-400" size={18} /><h3 className="text-foreground font-bold">Sleep</h3></div>
-          <div className="flex items-center justify-between mb-3"><span className="text-foreground/50 text-sm">Last night</span><span className="text-2xl font-extrabold text-foreground font-['Plus_Jakarta_Sans']">7.5h</span></div>
-          <div className="h-2 rounded-full bg-muted overflow-hidden mb-3"><div className="h-full rounded-full bg-gradient-to-r from-indigo-500 to-violet-500" style={{ width: "93%" }} /></div>
-          <div className="grid grid-cols-2 gap-3">
-            <div className="p-3 rounded-xl bg-muted border border-border"><p className="text-foreground/40 text-xs">Quality</p><p className="text-foreground font-bold text-sm mt-0.5">Deep Sleep</p></div>
-            <div className="p-3 rounded-xl bg-muted border border-border"><p className="text-foreground/40 text-xs">7-day avg</p><p className="text-foreground font-bold text-sm mt-0.5">7.2 hrs</p></div>
+        <Card className="p-5 flex flex-col justify-between">
+          <div>
+            <div className="flex items-center gap-2 mb-4"><Droplets className="text-cyan-400" size={18} /><h3 className="text-foreground font-bold">Hydration</h3></div>
+            <div className="flex items-end justify-between mb-3">
+              <span className="text-4xl font-extrabold text-foreground font-['Plus_Jakarta_Sans']">{waterCups}<span className="text-lg text-foreground/30">/10</span></span>
+              <span className="text-cyan-400 text-sm">{waterCups * 250} ml</span>
+            </div>
+            <div className="flex gap-1 mb-4">
+              {Array.from({ length: 10 }).map((_, i) => (
+                <button key={i} onClick={() => handleUpdateWater(i + 1)} className={`flex-1 h-6 rounded-md transition-all ${i < waterCups ? "bg-cyan-500" : "bg-muted hover:bg-muted/80"}`} />
+              ))}
+            </div>
+          </div>
+          <div className="flex gap-2">
+            <Btn variant="ghost" onClick={() => handleUpdateWater(Math.max(0, waterCups - 1))} className="flex-1 text-xs py-1.5">−</Btn>
+            <Btn variant="outline" onClick={() => handleUpdateWater(Math.min(10, waterCups + 1))} className="flex-1 text-cyan-400 text-xs py-1.5">+ 250ml</Btn>
           </div>
         </Card>
-        <Card className="p-5">
-          <div className="flex items-center gap-2 mb-4"><Smile className="text-amber-400" size={18} /><h3 className="text-foreground font-bold">Mood</h3></div>
-          <div className="grid grid-cols-3 gap-2">
-            {[["😄","great"],["😊","good"],["😐","okay"],["😔","sad"],["😰","stressed"],["😤","angry"]].map(([e,m]) => (
-              <button key={m} onClick={() => setMood(m)} className={`p-2.5 rounded-xl flex flex-col items-center gap-1 border transition-all ${mood === m ? "border-amber-500/40 bg-amber-500/10" : "border-border hover:border-border"}`}>
-                <span className="text-lg">{e}</span><span className="text-[10px] text-foreground/40 capitalize">{m}</span>
-              </button>
-            ))}
+
+        <Card className="p-5 flex flex-col justify-between">
+          <div>
+            <div className="flex items-center gap-2 mb-4"><Moon className="text-indigo-400" size={18} /><h3 className="text-foreground font-bold">Sleep Quality</h3></div>
+            <div className="flex items-center justify-between mb-3">
+              <span className="text-foreground/50 text-sm">Hours Logged</span>
+              <span className="text-2xl font-extrabold text-foreground font-['Plus_Jakarta_Sans']">{sleep}h</span>
+            </div>
+            <div className="h-2 rounded-full bg-muted overflow-hidden mb-3">
+              <div className="h-full rounded-full bg-gradient-to-r from-indigo-500 to-violet-500 transition-all" style={{ width: `${Math.min(100, (sleep / 8) * 100)}%` }} />
+            </div>
+            <div className="flex items-center gap-2 mt-3">
+              <input type="range" min="3" max="12" step="0.5" value={sleep} onChange={e => setSleep(Number(e.target.value))} className="w-full accent-primary" />
+            </div>
           </div>
+          <p className="text-[10px] text-foreground/45 mt-2">Recommended: 8 hours for cellular & brain recovery.</p>
+        </Card>
+
+        <Card className="p-5 flex flex-col justify-between">
+          <div>
+            <div className="flex items-center gap-2 mb-4"><Smile className="text-amber-400" size={18} /><h3 className="text-foreground font-bold">Energy & Mood</h3></div>
+            <div className="grid grid-cols-3 gap-2">
+              {[["😄","great"],["😊","good"],["😐","okay"],["😔","sad"],["😰","stressed"],["🔥","energized"]].map(([e,m]) => (
+                <button key={m} type="button" onClick={() => setMood(m)} className={`p-2 rounded-xl flex flex-col items-center gap-1 border transition-all ${mood === m ? "border-amber-500/40 bg-amber-500/10 scale-105" : "border-border hover:border-border"}`}>
+                  <span className="text-lg">{e}</span><span className="text-[9px] text-foreground/40 capitalize">{m}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+          <Btn onClick={handleSaveNotes} className="mt-3 text-xs py-1.5 w-full">Update Health Log</Btn>
         </Card>
       </div>
-      <Card className="p-5">
-        <div className="flex items-center gap-2 mb-5"><Activity className="text-emerald-400" size={18} /><h3 className="text-foreground font-bold">Health Score Breakdown</h3></div>
+
+      <Card className="p-5 space-y-4">
+        <div className="flex items-center gap-2 mb-2"><Activity className="text-emerald-400" size={18} /><h3 className="text-foreground font-bold">Health Score Breakdown</h3></div>
         <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-          {[["Hydration",62,"#06b6d4"],["Sleep",78,"#6366f1"],["Exercise",85,"#f59e0b"],["Nutrition",70,"#10b981"],["Mental",88,"#ec4899"]].map(([l,s,c]) => (
+          {[["Hydration", Math.min(100, Math.round((waterCups / 10) * 100)), "#06b6d4"], ["Sleep", Math.min(100, Math.round((sleep / 8) * 100)), "#6366f1"], ["Exercise", 85, "#f59e0b"], ["Nutrition", 75, "#10b981"], ["Mental", 90, "#ec4899"]].map(([l,s,c]) => (
             <div key={l as string} className="flex flex-col items-center">
               <div className="relative w-16 h-16">
                 <svg viewBox="0 0 60 60" className="w-full h-full -rotate-90">
@@ -2975,42 +3339,80 @@ function HealthView() {
   );
 }
 
-const weekData = [
-  { day: "Mon", habits: 8 }, { day: "Tue", habits: 6 }, { day: "Wed", habits: 9 },
-  { day: "Thu", habits: 7 }, { day: "Fri", habits: 10 }, { day: "Sat", habits: 5 }, { day: "Sun", habits: 8 },
-];
 function CareerView() {
-  const { user } = useAuth();
-  
-  // Simulated Interview applications tracker data
-  const interviews = [
-    { company: "Google", role: "Frontend Engineer", stage: "Onsite Technical", date: "2026-07-22", color: "text-amber-500 bg-amber-500/10" },
-    { company: "Stripe", role: "Software Engineer", stage: "System Design", date: "2026-07-28", color: "text-indigo-500 bg-indigo-500/10" },
-    { company: "Vercel", role: "React Engineer", stage: "Resume Review", date: "2026-08-04", color: "text-foreground/50 bg-muted" }
-  ];
+  const { careerApps, addCareerApp, updateCareerAppStage, deleteCareerApp } = useAuth();
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [company, setCompany] = useState("");
+  const [role, setRole] = useState("");
+  const [stage, setStage] = useState("Applied");
+  const [date, setDate] = useState("");
+  const [notes, setNotes] = useState("");
 
-  // GitHub contribution grid simulator data
+  const handleCreateApp = () => {
+    if (!company.trim() || !role.trim()) return;
+    addCareerApp({ company, role, stage, date: date || "Upcoming", notes });
+    setCompany(""); setRole(""); setDate(""); setNotes(""); setShowAddModal(false);
+  };
+
   const commitGrid = Array.from({ length: 7 * 20 }, (_, i) => ({
     id: i,
     level: i % 7 === 0 ? 0 : i % 5 === 0 ? 3 : i % 3 === 0 ? 2 : 1
   }));
 
   const commitColors = [
-    "bg-muted/30 dark:bg-muted/15", // 0
-    "bg-[#F3CCDE]",                 // 1
-    "bg-[#BA88AE]",                 // 2
-    "bg-[#5B3765]",                 // 3
+    "bg-muted/30 dark:bg-muted/15",
+    "bg-[#F3CCDE]",
+    "bg-[#BA88AE]",
+    "bg-[#5B3765]",
   ];
 
   return (
-    <div className="p-7 space-y-6 text-foreground font-['Poppins']">
-      
+    <div className="p-7 space-y-6 max-w-4xl mx-auto text-foreground font-['Poppins']">
+      {/* Header with Add Application Button */}
+      <Card className="p-5 border-primary/30 bg-gradient-to-r from-primary/10 to-indigo-500/10 flex justify-between items-center gap-4 flex-wrap">
+        <div>
+          <h3 className="text-base font-extrabold font-['Plus_Jakarta_Sans']">Career Milestones & Interview Tracker</h3>
+          <p className="text-xs text-foreground/60 mt-0.5">Manage job applications, technical prep, and coding hours.</p>
+        </div>
+        <Btn onClick={() => setShowAddModal(true)} variant="primary" className="text-xs py-2">+ Add Job Application / Goal</Btn>
+      </Card>
+
+      {/* Add Modal */}
+      {showAddModal && (
+        <Card className="p-5 border-border bg-card space-y-4 animate-fadeIn">
+          <div className="flex justify-between items-center border-b border-border/40 pb-2">
+            <h4 className="text-sm font-extrabold text-foreground">Add New Career Target</h4>
+            <button onClick={() => setShowAddModal(false)} className="text-xs font-bold text-foreground/40 hover:text-foreground">✕</button>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <Input label="Company / Target Organization" placeholder="e.g. Google, Stripe, Innovate Co" value={company} onChange={e => setCompany(e.target.value)} />
+            <Input label="Target Role" placeholder="e.g. Frontend Engineer, Product Manager" value={role} onChange={e => setRole(e.target.value)} />
+            <div>
+              <label className="block text-xs font-semibold text-foreground/70 mb-1.5">Current Stage</label>
+              <select value={stage} onChange={e => setStage(e.target.value)} className="w-full rounded-xl bg-background border border-border px-3 py-2 text-xs text-foreground font-semibold focus:outline-none focus:border-primary">
+                <option value="Applied">Applied</option>
+                <option value="Resume Review">Resume Review</option>
+                <option value="Technical Screening">Technical Screening</option>
+                <option value="System Design">System Design</option>
+                <option value="Onsite Technical">Onsite Technical</option>
+                <option value="Offer Received 🎉">Offer Received 🎉</option>
+              </select>
+            </div>
+            <Input label="Target Date / Interview Date" placeholder="e.g. Next Tuesday / 2026-08-10" value={date} onChange={e => setDate(e.target.value)} />
+          </div>
+          <div className="flex justify-end gap-2">
+            <Btn onClick={() => setShowAddModal(false)} variant="ghost">Cancel</Btn>
+            <Btn onClick={handleCreateApp}>Save Application</Btn>
+          </div>
+        </Card>
+      )}
+
       {/* Metrics Row */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         {[
           { title: "Study Hours", value: "48.5 hrs", desc: "This Month Progress", percent: 72, color: "bg-primary" },
           { title: "Coding Sessions", value: "31 cycles", desc: "This Month Progress", percent: 85, color: "bg-accent" },
-          { title: "Career Readiness", value: "76/100", desc: "Growth Score", percent: 76, color: "bg-primary" }
+          { title: "Career Readiness", value: "82/100", desc: "Growth Score", percent: 82, color: "bg-primary" }
         ].map(item => (
           <Card key={item.title} className="p-5 bg-card border-border shadow-sm flex flex-col justify-between">
             <div>
@@ -3037,7 +3439,6 @@ function CareerView() {
           <span className="text-[10px] text-primary font-bold">142 contributions this season</span>
         </div>
         
-        {/* Contributions Grid */}
         <div className="flex flex-wrap gap-1 items-center py-2 max-w-full overflow-x-auto">
           {commitGrid.map(cell => (
             <div
@@ -3063,9 +3464,9 @@ function CareerView() {
           <h3 className="text-xs font-extrabold text-foreground/40 uppercase tracking-widest">Skill Progress</h3>
           <div className="space-y-4">
             {[
-              { sk: "Python Algorithms", lvl: 78 },
-              { sk: "React Native Framework", lvl: 82 },
-              { sk: "System Architecture Design", lvl: 40 }
+              { sk: "Full Stack Architecture", lvl: 85 },
+              { sk: "System Design & Scalability", lvl: 75 },
+              { sk: "Algorithms & Problem Solving", lvl: 80 }
             ].map(item => (
               <div key={item.sk}>
                 <div className="flex justify-between mb-1.5">
@@ -3082,20 +3483,39 @@ function CareerView() {
 
         {/* Interview Applications Tracker */}
         <Card className="p-5 border-border bg-card shadow-sm space-y-3">
-          <h3 className="text-xs font-extrabold text-foreground/40 uppercase tracking-widest">Interview Tracker</h3>
-          <div className="divide-y divide-border/40">
-            {interviews.map(inv => (
-              <div key={inv.company} className="flex justify-between items-center py-2.5 first:pt-0 last:pb-0 text-xs">
-                <div>
-                  <p className="font-extrabold text-foreground/85">{inv.company}</p>
-                  <p className="text-[10px] text-foreground/40 mt-0.5">{inv.role}</p>
+          <h3 className="text-xs font-extrabold text-foreground/40 uppercase tracking-widest">Active Applications ({careerApps.length})</h3>
+          <div className="divide-y divide-border/40 space-y-3 pt-1">
+            {careerApps.length === 0 ? (
+              <p className="text-xs text-foreground/40 text-center py-4">No applications tracked yet. Click "+ Add Job Application" above!</p>
+            ) : (
+              careerApps.map(inv => (
+                <div key={inv.id} className="flex justify-between items-start py-2.5 first:pt-0 last:pb-0 text-xs gap-2">
+                  <div className="flex-1">
+                    <p className="font-extrabold text-foreground/85">{inv.company}</p>
+                    <p className="text-[10px] text-foreground/50 mt-0.5">{inv.role}</p>
+                    {inv.notes && <p className="text-[9px] text-primary/80 mt-1 italic">{inv.notes}</p>}
+                  </div>
+                  <div className="text-right flex flex-col items-end gap-1.5">
+                    <select
+                      value={inv.stage}
+                      onChange={e => updateCareerAppStage(inv.id, e.target.value)}
+                      className={`text-[9px] px-2 py-0.5 rounded-full font-bold uppercase cursor-pointer border border-transparent focus:border-primary ${inv.color || "bg-muted text-foreground"}`}
+                    >
+                      <option value="Applied">Applied</option>
+                      <option value="Resume Review">Resume Review</option>
+                      <option value="Technical Screening">Technical Screening</option>
+                      <option value="System Design">System Design</option>
+                      <option value="Onsite Technical">Onsite Technical</option>
+                      <option value="Offer Received 🎉">Offer Received 🎉</option>
+                    </select>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[9px] text-foreground/40 font-medium">{inv.date}</span>
+                      <button onClick={() => deleteCareerApp(inv.id)} className="text-[10px] text-red-400 hover:text-red-500 font-bold" title="Delete application">✕</button>
+                    </div>
+                  </div>
                 </div>
-                <div className="text-right">
-                  <span className={`text-[9px] px-2 py-0.5 rounded-full font-bold uppercase ${inv.color}`}>{inv.stage}</span>
-                  <p className="text-[9px] text-foreground/40 mt-1 font-medium">{inv.date}</p>
-                </div>
-              </div>
-            ))}
+              ))
+            )}
           </div>
         </Card>
       </div>
@@ -3286,31 +3706,92 @@ function GoalsView() {
 }
 
 function LearningView() {
-  const [roadmapSteps, setRoadmapSteps] = useState([
-    { step: 1, title: "HTML & CSS basics", desc: "Flexbox, CSS grid, semantic elements", done: true },
-    { step: 2, title: "JavaScript Core ES6+", desc: "Promises, async/await, closures", done: true },
-    { step: 3, title: "React Fundamentals", desc: "Hooks, routing, virtual DOM", done: true },
-    { step: 4, title: "TypeScript Integration", desc: "Types, interfaces, generic parameters", done: false },
-    { step: 5, title: "Full Stack Node/Express", desc: "REST APIs, database queries, JWT auth", done: false }
-  ]);
+  const { learningSteps, toggleLearningStep, addLearningStep, learningCourses, addLearningCourse, toggleCourseComplete } = useAuth();
+  const [showAddStep, setShowAddStep] = useState(false);
+  const [stepTitle, setStepTitle] = useState("");
+  const [stepDesc, setStepDesc] = useState("");
 
-  const toggleStep = (stepIdx: number) => {
-    setRoadmapSteps(prev => prev.map((s, i) => i === stepIdx ? { ...s, done: !s.done } : s));
+  const [showAddCourse, setShowAddCourse] = useState(false);
+  const [courseTitle, setCourseTitle] = useState("");
+  const [courseDesc, setCourseDesc] = useState("");
+  const [courseCat, setCourseCat] = useState("Coding");
+  const [courseHours, setCourseHours] = useState("10");
+
+  const handleCreateStep = () => {
+    if (!stepTitle.trim()) return;
+    addLearningStep({ title: stepTitle, desc: stepDesc || "Custom self-study milestone" });
+    setStepTitle(""); setStepDesc(""); setShowAddStep(false);
+  };
+
+  const handleCreateCourse = () => {
+    if (!courseTitle.trim()) return;
+    addLearningCourse({ title: courseTitle, desc: courseDesc || "Self-paced study topic", category: courseCat, hours: Number(courseHours) || 5 });
+    setCourseTitle(""); setCourseDesc(""); setShowAddCourse(false);
   };
 
   return (
     <div className="p-7 space-y-6 max-w-4xl mx-auto text-foreground font-['Poppins']">
+      {/* Header Banner */}
+      <Card className="p-5 border-primary/30 bg-gradient-to-r from-primary/10 to-purple-500/10 flex justify-between items-center gap-4 flex-wrap">
+        <div>
+          <h3 className="text-base font-extrabold font-['Plus_Jakarta_Sans']">Personalized Learning & Skill Roadmap</h3>
+          <p className="text-xs text-foreground/60 mt-0.5">Track study steps, complete courses, and add custom study targets.</p>
+        </div>
+        <div className="flex gap-2">
+          <Btn onClick={() => setShowAddStep(true)} variant="outline" className="text-xs py-2">+ Add Milestone</Btn>
+          <Btn onClick={() => setShowAddCourse(true)} variant="primary" className="text-xs py-2">+ Add Course / Topic</Btn>
+        </div>
+      </Card>
+
+      {/* Add Step Modal */}
+      {showAddStep && (
+        <Card className="p-5 border-border bg-card space-y-4 animate-fadeIn">
+          <div className="flex justify-between items-center border-b border-border/40 pb-2">
+            <h4 className="text-sm font-extrabold text-foreground">New Study Roadmap Step</h4>
+            <button onClick={() => setShowAddStep(false)} className="text-xs font-bold text-foreground/40 hover:text-foreground">✕</button>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <Input label="Milestone Title" placeholder="e.g. Master Rust Concurrency" value={stepTitle} onChange={e => setStepTitle(e.target.value)} />
+            <Input label="Description / Focus Area" placeholder="e.g. Threads, channels, async patterns" value={stepDesc} onChange={e => setStepDesc(e.target.value)} />
+          </div>
+          <div className="flex justify-end gap-2">
+            <Btn onClick={() => setShowAddStep(false)} variant="ghost">Cancel</Btn>
+            <Btn onClick={handleCreateStep}>Save Roadmap Step</Btn>
+          </div>
+        </Card>
+      )}
+
+      {/* Add Course Modal */}
+      {showAddCourse && (
+        <Card className="p-5 border-border bg-card space-y-4 animate-fadeIn">
+          <div className="flex justify-between items-center border-b border-border/40 pb-2">
+            <h4 className="text-sm font-extrabold text-foreground">Add Custom Course / Study Target</h4>
+            <button onClick={() => setShowAddCourse(false)} className="text-xs font-bold text-foreground/40 hover:text-foreground">✕</button>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <Input label="Course Title" placeholder="e.g. System Design Interview Bootcamp" value={courseTitle} onChange={e => setCourseTitle(e.target.value)} />
+            <Input label="Description / Platform" placeholder="e.g. 15 hours on architecture & scaling" value={courseDesc} onChange={e => setCourseDesc(e.target.value)} />
+            <Input label="Category" placeholder="e.g. Coding, Career, Wellness" value={courseCat} onChange={e => setCourseCat(e.target.value)} />
+            <Input label="Estimated Hours" type="number" placeholder="10" value={courseHours} onChange={e => setCourseHours(e.target.value)} />
+          </div>
+          <div className="flex justify-end gap-2">
+            <Btn onClick={() => setShowAddCourse(false)} variant="ghost">Cancel</Btn>
+            <Btn onClick={handleCreateCourse}>Add Course Target</Btn>
+          </div>
+        </Card>
+      )}
+
       {/* Learning Roadmap Steps */}
       <Card className="p-5 border-border bg-card space-y-4">
         <h3 className="text-xs font-extrabold text-foreground/40 uppercase tracking-widest">Self-Study Roadmap Progress</h3>
         <div className="relative border-l border-border pl-6 ml-2 space-y-5">
-          {roadmapSteps.map((r, idx) => (
-            <div key={r.step} className="relative cursor-pointer hover:opacity-80 transition-opacity" onClick={() => toggleStep(idx)}>
+          {learningSteps.map((r, idx) => (
+            <div key={r.step} className="relative cursor-pointer hover:opacity-80 transition-opacity" onClick={() => toggleLearningStep(idx)}>
               <div className={`absolute -left-9 top-0.5 w-6.5 h-6.5 rounded-full flex items-center justify-center text-[10px] font-bold transition-all border ${r.done ? "bg-primary border-transparent text-white shadow-sm" : "bg-muted border-border text-foreground/35"}`}>
                 {r.done ? "✓" : r.step}
               </div>
               <div>
-                <h4 className={`text-xs font-bold ${r.done ? "text-foreground" : "text-foreground/60"}`}>{r.title}</h4>
+                <h4 className={`text-xs font-bold ${r.done ? "text-foreground line-through opacity-70" : "text-foreground"}`}>{r.title}</h4>
                 <p className="text-[10px] text-foreground/45 mt-0.5 leading-relaxed">{r.desc}</p>
               </div>
             </div>
@@ -3318,24 +3799,25 @@ function LearningView() {
         </div>
       </Card>
 
-      {/* Certificates & accomplishments */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <Card className="p-4 border-border bg-card space-y-3">
-          <h4 className="text-xs font-extrabold flex items-center gap-1"><Trophy size={14} className="text-amber-500" /> Active Certificates</h4>
-          <div className="p-3 bg-muted/40 border border-border/30 rounded-xl">
-            <p className="text-xs font-bold">Meta Front-End Developer certificate</p>
-            <p className="text-[9px] text-foreground/40 mt-1">Acquired March 2025 · Credential ID: META-78Y2</p>
-          </div>
-        </Card>
-
-        <Card className="p-4 border-border bg-card space-y-3">
-          <h4 className="text-xs font-extrabold flex items-center gap-1"><BookOpen size={14} className="text-primary" /> Recommended Courses</h4>
-          <div className="p-3 bg-muted/40 border border-border/30 rounded-xl">
-            <p className="text-xs font-bold text-primary">Advanced TypeScript with React</p>
-            <p className="text-[9px] text-foreground/40 mt-1">Level up your generic typing skills · 12 hours</p>
-          </div>
-        </Card>
-      </div>
+      {/* Custom Courses & Study Targets */}
+      <Card className="p-5 border-border bg-card space-y-4">
+        <h3 className="text-xs font-extrabold text-foreground/40 uppercase tracking-widest">My Courses & Study Goals ({learningCourses.filter(c => c.completed).length}/{learningCourses.length} done)</h3>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          {learningCourses.map(c => (
+            <div key={c.id} onClick={() => toggleCourseComplete(c.id)}
+              className={`p-4 rounded-2xl border cursor-pointer transition-all ${c.completed ? "border-primary/40 bg-primary/5 opacity-75" : "border-border hover:border-primary/30 bg-muted/20"}`}>
+              <div className="flex justify-between items-start gap-2">
+                <span className="text-xs font-bold text-foreground">{c.title}</span>
+                <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded-full ${c.completed ? "bg-primary text-white" : "bg-muted text-foreground/50"}`}>
+                  {c.completed ? "Completed ✓" : `${c.hours} hrs`}
+                </span>
+              </div>
+              <p className="text-[10px] text-foreground/50 mt-1 leading-relaxed">{c.desc}</p>
+              <span className="text-[9px] font-bold text-primary mt-2 block uppercase tracking-wider">[{c.category}]</span>
+            </div>
+          ))}
+        </div>
+      </Card>
     </div>
   );
 }
@@ -3348,22 +3830,47 @@ function JournalView() {
   const [gratitude, setGratitude] = useState("");
   const [lessons, setLessons] = useState("");
 
+  const applyPrompt = (type: string) => {
+    if (type === "evening") {
+      setWins("• Maintained focus on my custom goal tasks today.\n• Drank water and stayed active throughout the day.");
+      setChallenges("• Procrastinated slightly during after-lunch deep work block.");
+      setGratitude("• Grateful for clear mental focus and having a supportive growth plan.");
+      setLessons("• Break large intimidating tasks into 15-minute micro steps right away.");
+    } else if (type === "gratitude") {
+      setGratitude("1. Health and daily physical vitality.\n2. Access to unlimited self-learning resources.\n3. The opportunity to build better long-term habits.");
+      setWins("Taking intentional action toward my self improvement plan.");
+    } else if (type === "weekly") {
+      setWins("• Completed key study roadmap milestones.\n• Checked off daily habits consistently all week.");
+      setChallenges("• Need more structured wind-down time before bed.");
+      setLessons("• Small daily habits compound into massive weekly wins.");
+    }
+  };
+
   const handleAddJournal = () => {
-    if (!wins.trim() && !challenges.trim()) return;
+    if (!wins.trim() && !challenges.trim() && !gratitude.trim() && !lessons.trim()) return;
     addJournal({ mood, wins, challenges, gratitude, lessons });
-    setWins("");
-    setChallenges("");
-    setGratitude("");
-    setLessons("");
+    setWins(""); setChallenges(""); setGratitude(""); setLessons("");
   };
 
   return (
     <div className="p-7 space-y-6 max-w-4xl mx-auto text-foreground font-['Poppins']">
+      {/* Quick Prompts Hub */}
+      <Card className="p-4 border-primary/20 bg-primary/5 flex flex-wrap items-center justify-between gap-3">
+        <span className="text-xs font-extrabold text-primary uppercase tracking-wider flex items-center gap-1.5">
+          <Zap size={14} /> Guided Reflection Templates:
+        </span>
+        <div className="flex gap-2 flex-wrap">
+          <Btn onClick={() => applyPrompt("evening")} variant="outline" className="text-[11px] py-1.5 bg-card">🧠 Evening Reflection</Btn>
+          <Btn onClick={() => applyPrompt("gratitude")} variant="outline" className="text-[11px] py-1.5 bg-card">⚡ Daily Gratitude</Btn>
+          <Btn onClick={() => applyPrompt("weekly")} variant="outline" className="text-[11px] py-1.5 bg-card">🎯 Weekly Review</Btn>
+        </div>
+      </Card>
+
       <Card className="p-5 border-border bg-card space-y-4">
         <h3 className="text-xs font-extrabold text-foreground/40 uppercase tracking-widest">New Journal Entry</h3>
         <div className="flex gap-2 items-center flex-wrap">
           <span className="text-xs text-foreground/50 font-bold mr-1">Select Mood:</span>
-          {["😄", "😊", "😐", "😔", "😰", "😤", "🧘"].map(m => (
+          {["😄", "😊", "😐", "😔", "😰", "😤", "🧘", "🔥"].map(m => (
             <button
               key={m}
               type="button"
@@ -3375,29 +3882,36 @@ function JournalView() {
           ))}
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <Textarea label="Today's Wins" placeholder="What went well today?" value={wins} onChange={e => setWins(e.target.value)} rows={2} />
-          <Textarea label="Today's Challenges" placeholder="What challenges did you face?" value={challenges} onChange={e => setChallenges(e.target.value)} rows={2} />
-          <Textarea label="Gratitude focus" placeholder="Name 3 things you are grateful for today..." value={gratitude} onChange={e => setGratitude(e.target.value)} rows={2} />
-          <Textarea label="Lessons Learned" placeholder="What will you do differently next time?" value={lessons} onChange={e => setLessons(e.target.value)} rows={2} />
+          <Textarea label="Today's Wins" placeholder="What went well today?" value={wins} onChange={e => setWins(e.target.value)} rows={3} />
+          <Textarea label="Today's Challenges" placeholder="What obstacles did you face?" value={challenges} onChange={e => setChallenges(e.target.value)} rows={3} />
+          <Textarea label="Gratitude focus" placeholder="Name 3 things you are grateful for today..." value={gratitude} onChange={e => setGratitude(e.target.value)} rows={3} />
+          <Textarea label="Lessons Learned" placeholder="What will you do differently next time?" value={lessons} onChange={e => setLessons(e.target.value)} rows={3} />
         </div>
-        <Btn onClick={handleAddJournal}>Save Reflection Journal</Btn>
+        <Btn onClick={handleAddJournal} className="w-full sm:w-auto">Save Reflection Journal</Btn>
       </Card>
 
       {/* Logged reflections */}
       <div className="space-y-4">
-        {journals.map(j => (
-          <Card key={j.id} className="p-5 border-border bg-card space-y-3">
-            <div className="flex justify-between items-center border-b border-border/40 pb-2">
-              <span className="text-[10px] text-foreground/45 font-bold uppercase tracking-wider">Reflected on {j.date}</span>
-              <span className="text-lg bg-muted px-2 py-0.5 rounded-full border border-border/20">{j.mood}</span>
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
-              {j.wins && <div><p className="text-primary font-bold">Wins</p><p className="text-foreground/70 mt-0.5 leading-relaxed">{j.wins}</p></div>}
-              {j.challenges && <div><p className="text-red-500 font-bold">Challenges</p><p className="text-foreground/70 mt-0.5 leading-relaxed">{j.challenges}</p></div>}
-              {j.gratitude && <div className="col-span-1 md:col-span-2 border-t border-border/30 pt-2"><p className="text-accent font-bold">Gratitude Focus</p><p className="text-foreground/60 mt-0.5 leading-relaxed">{j.gratitude}</p></div>}
-            </div>
+        {journals.length === 0 ? (
+          <Card className="p-6 text-center text-xs text-foreground/40 border-dashed">
+            No journal entries yet. Click a template button above or write your first reflection today!
           </Card>
-        ))}
+        ) : (
+          journals.map(j => (
+            <Card key={j.id} className="p-5 border-border bg-card space-y-3">
+              <div className="flex justify-between items-center border-b border-border/40 pb-2">
+                <span className="text-[10px] text-foreground/45 font-bold uppercase tracking-wider">Reflected on {j.date}</span>
+                <span className="text-lg bg-muted px-2 py-0.5 rounded-full border border-border/20">{j.mood}</span>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+                {j.wins && <div><p className="text-primary font-bold">Wins</p><p className="text-foreground/70 mt-0.5 leading-relaxed whitespace-pre-line">{j.wins}</p></div>}
+                {j.challenges && <div><p className="text-red-500 font-bold">Challenges</p><p className="text-foreground/70 mt-0.5 leading-relaxed whitespace-pre-line">{j.challenges}</p></div>}
+                {j.gratitude && <div className="col-span-1 md:col-span-2 border-t border-border/30 pt-2"><p className="text-accent font-bold">Gratitude Focus</p><p className="text-foreground/60 mt-0.5 leading-relaxed whitespace-pre-line">{j.gratitude}</p></div>}
+                {j.lessons && <div className="col-span-1 md:col-span-2 border-t border-border/30 pt-2"><p className="text-purple-400 font-bold">Lessons & Takeaways</p><p className="text-foreground/60 mt-0.5 leading-relaxed whitespace-pre-line">{j.lessons}</p></div>}
+              </div>
+            </Card>
+          ))
+        )}
       </div>
     </div>
   );
