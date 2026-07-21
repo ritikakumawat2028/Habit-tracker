@@ -13,7 +13,8 @@
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
     "grow-sync-monorepo": "file:..",
-    "mongoose": "^9.7.4"
+    "mongoose": "^9.7.4",
+    "socket.io": "^4.8.3"
   },
   "devDependencies": {
     "@types/cors": "^2.8.17",
