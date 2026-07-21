@@ -1,0 +1,224 @@
+{
+  "user": {
+    "id": "u1",
+    "name": "Alex Chen",
+    "email": "demo@growsync.app",
+    "avatar": null,
+    "bio": "Building better habits, one day at a time.",
+    "level": 12,
+    "xp": 340,
+    "streak": 23,
+    "joinDate": "January 2025",
+    "goals": [
+      "selfcare"
+    ],
+    "inviteCode": "ALEX-X7K2"
+  },
+  "tasks": [
+    {
+      "id": "t1",
+      "title": "Review System Design notes",
+      "note": "Focus on distributed systems chapter.",
+      "category": "Career",
+      "priority": "medium",
+      "done": false,
+      "dueDate": "2026-06-17",
+      "createdAt": "2026-06-16"
+    },
+    {
+      "id": "t2",
+      "title": "Buy groceries",
+      "note": "Oats, fruits, protein bars.",
+      "category": "Personal",
+      "priority": "medium",
+      "done": true,
+      "dueDate": "2026-06-17",
+      "createdAt": "2026-06-16"
+    },
+    {
+      "id": "t3",
+      "title": "Call mom",
+      "note": "",
+      "category": "Personal",
+      "priority": "low",
+      "done": false,
+      "dueDate": "2026-06-18",
+      "createdAt": "2026-06-16"
+    },
+    {
+      "id": "t4",
+      "title": "Submit PR for auth module",
+      "note": "Make sure tests pass first.",
+      "category": "Career",
+      "priority": "high",
+      "done": false,
+      "dueDate": "2026-06-18",
+      "createdAt": "2026-06-17"
+    }
+  ],
+  "notes": [
+    {
+      "id": "n1",
+      "title": "Morning Routine Tips",
+      "body": "Wake up at 6 AM, drink water first, stretch for 5 min before checking phone.",
+      "color": "violet",
+      "pinned": true,
+      "createdAt": "2026-06-15"
+    },
+    {
+      "id": "n2",
+      "title": "Books to Read",
+      "body": "Atomic Habits, Deep Work, The Almanack of Naval Ravikant, Can't Hurt Me.",
+      "color": "pink",
+      "pinned": false,
+      "createdAt": "2026-06-14"
+    },
+    {
+      "id": "n3",
+      "title": "Workout Split",
+      "body": "Mon: Push, Tue: Pull, Wed: Legs, Thu: Push, Fri: Pull, Sat: Legs, Sun: Rest.",
+      "color": "emerald",
+      "pinned": false,
+      "createdAt": "2026-06-13"
+    }
+  ],
+  "habits": [
+    {
+      "id": 1,
+      "name": "Morning Run",
+      "category": "Fitness",
+      "icon": "🏃",
+      "priority": "high",
+      "freq": "Daily",
+      "streak": 23,
+      "target": "30 min",
+      "completedToday": true
+    },
+    {
+      "id": 2,
+      "name": "Read Books",
+      "category": "Reading",
+      "icon": "📚",
+      "priority": "high",
+      "freq": "Daily",
+      "streak": 15,
+      "target": "30 min",
+      "completedToday": true
+    },
+    {
+      "id": 3,
+      "name": "Drink Water",
+      "category": "Hydration",
+      "icon": "💧",
+      "priority": "medium",
+      "freq": "Daily",
+      "streak": 8,
+      "target": "8 glasses",
+      "completedToday": false
+    },
+    {
+      "id": 4,
+      "name": "Code Practice",
+      "category": "Career",
+      "icon": "💻",
+      "priority": "high",
+      "freq": "Daily",
+      "streak": 31,
+      "target": "1 hour",
+      "completedToday": false
+    },
+    {
+      "id": 5,
+      "name": "Meditation",
+      "category": "Mental Health",
+      "icon": "🧘",
+      "priority": "medium",
+      "freq": "Daily",
+      "streak": 7,
+      "target": "10 min",
+      "completedToday": true
+    },
+    {
+      "id": 6,
+      "name": "Sleep 8 Hours",
+      "category": "Sleep",
+      "icon": "🌙",
+      "priority": "high",
+      "freq": "Daily",
+      "streak": 5,
+      "target": "8 hours",
+      "completedToday": false
+    }
+  ],
+  "health": {
+    "water": 5,
+    "mood": "good"
+  },
+  "partners": [
+    {
+      "id": "p1",
+      "name": "Jordan Park",
+      "avatar": null,
+      "level": 15,
+      "streak": 45,
+      "xp": 480,
+      "status": "online",
+      "inviteCode": "JRDN-P4RK",
+      "habits": [
+        {
+          "name": "Morning Run",
+          "icon": "🏃",
+          "done": true,
+          "streak": 45
+        },
+        {
+          "name": "Read 30 min",
+          "icon": "📚",
+          "done": true,
+          "streak": 38
+        },
+        {
+          "name": "Meditation",
+          "icon": "🧘",
+          "done": false,
+          "streak": 12
+        },
+        {
+          "name": "Cold Shower",
+          "icon": "🚿",
+          "done": true,
+          "streak": 20
+        }
+      ],
+      "tasks": [
+        {
+          "title": "Review System Design notes",
+          "done": true,
+          "priority": "high"
+        },
+        {
+          "title": "LeetCode 2 problems",
+          "done": false,
+          "priority": "high"
+        },
+        {
+          "title": "Reply to recruiter email",
+          "done": false,
+          "priority": "medium"
+        }
+      ],
+      "weekProgress": [
+        80,
+        70,
+        90,
+        85,
+        100,
+        60,
+        75
+      ]
+    }
+  ],
+  "joinedChallenges": [
+    1
+  ]
+}
