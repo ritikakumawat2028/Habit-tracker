@@ -308,6 +308,17 @@ const AuthCtx = createContext<{
   healthLogs: [], updateTodayHealth: () => {}, generateCustomPlan: () => {},
 });
 
+function loadArray<T>(key: string, fallback: T[]): T[] {
+  try {
+    const saved = localStorage.getItem(key);
+    if (!saved) return fallback;
+    const parsed = JSON.parse(saved);
+    return Array.isArray(parsed) ? parsed : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
 function AuthProvider({ children }: { children: React.ReactNode }) {
   const DEFAULT_MISSIONS: DailyMission[] = [
     { id: "m1", title: "Complete 2 daily tasks", rewardCoins: 15, rewardXp: 40, done: false },
@@ -322,83 +333,57 @@ function AuthProvider({ children }: { children: React.ReactNode }) {
   ];
 
   const [user, setUser] = useState<UserData | null>(() => {
-    const saved = localStorage.getItem("gs_user");
-    return saved ? JSON.parse(saved) : null;
+    try {
+      const saved = localStorage.getItem("gs_user");
+      if (!saved) return null;
+      const parsed = JSON.parse(saved);
+      return (parsed && typeof parsed === "object" && parsed.id) ? parsed : null;
+    } catch {
+      return null;
+    }
   });
+
   // All data starts empty — synced from backend after login
-  const [tasks, setTasks] = useState<Task[]>(() => {
-    const saved = localStorage.getItem("gs_tasks");
-    return saved ? JSON.parse(saved) : [];
-  });
-  const [notes, setNotes] = useState<Note[]>(() => {
-    const saved = localStorage.getItem("gs_notes");
-    return saved ? JSON.parse(saved) : [];
-  });
-  const [habits, setHabits] = useState<Habit[]>(() => {
-    const saved = localStorage.getItem("gs_habits");
-    return saved ? JSON.parse(saved) : [];
-  });
-  const [goalsList, setGoalsList] = useState<GoalItem[]>(() => {
-    const saved = localStorage.getItem("gs_goals");
-    return saved ? JSON.parse(saved) : [];
-  });
-  const [journals, setJournals] = useState<JournalEntry[]>(() => {
-    const saved = localStorage.getItem("gs_journals");
-    return saved ? JSON.parse(saved) : [];
-  });
-  const [focusSessions, setFocusSessions] = useState<FocusSession[]>(() => {
-    const saved = localStorage.getItem("gs_focus");
-    return saved ? JSON.parse(saved) : [];
-  });
-  const [missions, setMissions] = useState<DailyMission[]>(() => {
-    const saved = localStorage.getItem("gs_missions");
-    return saved ? JSON.parse(saved) : DEFAULT_MISSIONS;
-  });
-  const [rewards, setRewards] = useState<RewardItem[]>(() => {
-    const saved = localStorage.getItem("gs_rewards");
-    return saved ? JSON.parse(saved) : DEFAULT_REWARDS;
-  });
+  const [tasks, setTasks] = useState<Task[]>(() => loadArray("gs_tasks", []));
+  const [notes, setNotes] = useState<Note[]>(() => loadArray("gs_notes", []));
+  const [habits, setHabits] = useState<Habit[]>(() => loadArray("gs_habits", []));
+  const [goalsList, setGoalsList] = useState<GoalItem[]>(() => loadArray("gs_goals", []));
+  const [journals, setJournals] = useState<JournalEntry[]>(() => loadArray("gs_journals", []));
+  const [focusSessions, setFocusSessions] = useState<FocusSession[]>(() => loadArray("gs_focus", []));
+  const [missions, setMissions] = useState<DailyMission[]>(() => loadArray("gs_missions", DEFAULT_MISSIONS));
+  const [rewards, setRewards] = useState<RewardItem[]>(() => loadArray("gs_rewards", DEFAULT_REWARDS));
   const [coins, setCoins] = useState<number>(() => {
-    const saved = localStorage.getItem("gs_coins");
-    return saved ? Number(saved) : 0;
+    try {
+      const saved = localStorage.getItem("gs_coins");
+      return saved ? Number(saved) : 0;
+    } catch {
+      return 0;
+    }
   });
-  const [partners, setPartners] = useState<GrowthPartner[]>(() => {
-    const saved = localStorage.getItem("gs_partners");
-    return saved ? JSON.parse(saved) : [];
-  });
+  const [partners, setPartners] = useState<GrowthPartner[]>(() => loadArray("gs_partners", []));
 
-  const [learningSteps, setLearningSteps] = useState<LearningStep[]>(() => {
-    const saved = localStorage.getItem("gs_learning_roadmap");
-    return saved ? JSON.parse(saved) : [
-      { step: 1, title: "HTML & CSS basics", desc: "Flexbox, CSS grid, semantic elements", done: true },
-      { step: 2, title: "JavaScript Core ES6+", desc: "Promises, async/await, closures", done: true },
-      { step: 3, title: "React Fundamentals", desc: "Hooks, routing, virtual DOM", done: true },
-      { step: 4, title: "TypeScript Integration", desc: "Types, interfaces, generic parameters", done: false },
-      { step: 5, title: "Full Stack Node/Express", desc: "REST APIs, database queries, JWT auth", done: false }
-    ];
-  });
+  const [learningSteps, setLearningSteps] = useState<LearningStep[]>(() => loadArray("gs_learning_roadmap", [
+    { step: 1, title: "HTML & CSS basics", desc: "Flexbox, CSS grid, semantic elements", done: true },
+    { step: 2, title: "JavaScript Core ES6+", desc: "Promises, async/await, closures", done: true },
+    { step: 3, title: "React Fundamentals", desc: "Hooks, routing, virtual DOM", done: true },
+    { step: 4, title: "TypeScript Integration", desc: "Types, interfaces, generic parameters", done: false },
+    { step: 5, title: "Full Stack Node/Express", desc: "REST APIs, database queries, JWT auth", done: false }
+  ]));
 
-  const [learningCourses, setLearningCourses] = useState<LearningCourse[]>(() => {
-    const saved = localStorage.getItem("gs_learning_courses");
-    return saved ? JSON.parse(saved) : [
-      { id: "c1", title: "Advanced TypeScript with React", desc: "Level up your generic typing skills · 12 hours", category: "Coding", hours: 12, completed: false },
-      { id: "c2", title: "System Design for Web Developers", desc: "Architecture, scalability, database indexing · 8 hours", category: "Career", hours: 8, completed: false }
-    ];
-  });
+  const [learningCourses, setLearningCourses] = useState<LearningCourse[]>(() => loadArray("gs_learning_courses", [
+    { id: "c1", title: "Advanced TypeScript with React", desc: "Level up your generic typing skills · 12 hours", category: "Coding", hours: 12, completed: false },
+    { id: "c2", title: "System Design for Web Developers", desc: "Architecture, scalability, database indexing · 8 hours", category: "Career", hours: 8, completed: false }
+  ]));
 
-  const [careerApps, setCareerApps] = useState<CareerApp[]>(() => {
-    const saved = localStorage.getItem("gs_career_apps");
-    return saved ? JSON.parse(saved) : [
-      { id: "ca1", company: "Google", role: "Frontend Engineer", stage: "Onsite Technical", date: "2026-07-22", color: "text-amber-500 bg-amber-500/10" },
-      { id: "ca2", company: "Stripe", role: "Software Engineer", stage: "System Design", date: "2026-07-28", color: "text-indigo-500 bg-indigo-500/10" },
-      { id: "ca3", company: "Vercel", role: "React Engineer", stage: "Resume Review", date: "2026-08-04", color: "text-foreground/50 bg-muted" }
-    ];
-  });
+  const [careerApps, setCareerApps] = useState<CareerApp[]>(() => loadArray("gs_career_apps", [
+    { id: "ca1", company: "Google", role: "Frontend Engineer", stage: "Onsite Technical", date: "2026-07-22", color: "text-amber-500 bg-amber-500/10" },
+    { id: "ca2", company: "Stripe", role: "Software Engineer", stage: "System Design", date: "2026-07-28", color: "text-indigo-500 bg-indigo-500/10" },
+    { id: "ca3", company: "Vercel", role: "React Engineer", stage: "Resume Review", date: "2026-08-04", color: "text-foreground/50 bg-muted" }
+  ]));
 
   const [healthLogs, setHealthLogs] = useState<HealthLog[]>(() => {
-    const saved = localStorage.getItem("gs_health_logs");
     const today = new Date().toISOString().split("T")[0];
-    return saved ? JSON.parse(saved) : [{ date: today, waterMl: 1500, sleepHours: 7.5, workoutMins: 45, mood: "😊", notes: "Felt energized after morning walk." }];
+    return loadArray("gs_health_logs", [{ date: today, waterMl: 1500, sleepHours: 7.5, workoutMins: 45, mood: "😊", notes: "Felt energized after morning walk." }]);
   });
 
   const persist = useCallback((key: string, val: unknown) => localStorage.setItem(key, JSON.stringify(val)), []);
@@ -579,19 +564,20 @@ function AuthProvider({ children }: { children: React.ReactNode }) {
 
   // ── Sync from backend on mount ──
   useEffect(() => {
+    if (!user) return;
     apiFetch<Task[]>("/tasks").then(data => {
-      if (data) { setTasks(data); persist("gs_tasks", data); }
+      if (Array.isArray(data)) { setTasks(data); persist("gs_tasks", data); }
     });
     apiFetch<Note[]>("/notes").then(data => {
-      if (data) { setNotes(data); persist("gs_notes", data); }
+      if (Array.isArray(data)) { setNotes(data); persist("gs_notes", data); }
     });
     apiFetch<Habit[]>("/habits").then(data => {
-      if (data) { setHabits(data); persist("gs_habits", data); }
+      if (Array.isArray(data)) { setHabits(data); persist("gs_habits", data); }
     });
     apiFetch<GrowthPartner[]>("/partners").then(data => {
-      if (data) { setPartners(data); persist("gs_partners", data); }
+      if (Array.isArray(data)) { setPartners(data); persist("gs_partners", data); }
     });
-  }, [persist]);
+  }, [user, persist]);
 
   const login = useCallback(async (email: string, name?: string) => {
     const serverUser = await apiFetch<UserData>("/auth/login", {
@@ -599,7 +585,7 @@ function AuthProvider({ children }: { children: React.ReactNode }) {
       body: JSON.stringify({ email, name }),
     });
 
-    if (serverUser) {
+    if (serverUser && serverUser.id) {
       // ✅ Backend online — use real account
       setUser(serverUser);
       persist("gs_user", serverUser);
@@ -609,10 +595,10 @@ function AuthProvider({ children }: { children: React.ReactNode }) {
       localStorage.removeItem("gs_habits");
       localStorage.removeItem("gs_partners");
       setTasks([]); setNotes([]); setHabits([]); setPartners([]);
-      apiFetch<Task[]>("/tasks").then(data => { if (data) { setTasks(data); persist("gs_tasks", data); } });
-      apiFetch<Note[]>("/notes").then(data => { if (data) { setNotes(data); persist("gs_notes", data); } });
-      apiFetch<Habit[]>("/habits").then(data => { if (data) { setHabits(data); persist("gs_habits", data); } });
-      apiFetch<GrowthPartner[]>("/partners").then(data => { if (data) { setPartners(data); persist("gs_partners", data); } });
+      apiFetch<Task[]>("/tasks").then(data => { if (Array.isArray(data)) { setTasks(data); persist("gs_tasks", data); } });
+      apiFetch<Note[]>("/notes").then(data => { if (Array.isArray(data)) { setNotes(data); persist("gs_notes", data); } });
+      apiFetch<Habit[]>("/habits").then(data => { if (Array.isArray(data)) { setHabits(data); persist("gs_habits", data); } });
+      apiFetch<GrowthPartner[]>("/partners").then(data => { if (Array.isArray(data)) { setPartners(data); persist("gs_partners", data); } });
     } else {
       // ⚠️ Backend offline — create a local account so the app is still usable
       const existingSaved = localStorage.getItem("gs_user");
