@@ -1858,10 +1858,10 @@ export function DashboardView({ onNavigate, onQuickAdd }: { onNavigate: (v: View
   ].sort((a, b) => b.xp - a.xp);
 
   return (
-    <div className="flex h-full overflow-hidden text-foreground">
+    <div className="flex flex-col lg:flex-row h-full overflow-y-auto lg:overflow-hidden text-foreground">
       
       {/* ── CENTER MAIN CONTENT COLUMN ── */}
-      <div className="flex-1 overflow-y-auto px-4 md:px-7 py-4 md:py-6 space-y-6 min-w-0 bg-background">
+      <div className="flex-1 lg:overflow-y-auto px-4 md:px-7 py-4 md:py-6 space-y-6 min-w-0 bg-background">
         
         {/* ROW 1: Active Growth Plan Command Banner & Switcher */}
         {activePlan && (
@@ -2308,7 +2308,7 @@ export function DashboardView({ onNavigate, onQuickAdd }: { onNavigate: (v: View
       </div>
 
       {/* ── RIGHT COLUMN: NOTION-STYLE WIDGETS PANEL ── */}
-      <div className="w-[280px] flex-shrink-0 bg-[#FAF9FC] border-l border-border overflow-y-auto py-6 px-5 space-y-6 select-none font-['Poppins']">
+      <div className="w-full lg:w-[280px] flex-shrink-0 bg-card border-t lg:border-t-0 lg:border-l border-border lg:overflow-y-auto py-6 px-5 space-y-6 select-none font-['Poppins']">
         
         {/* Calendar Widget */}
         <div>
