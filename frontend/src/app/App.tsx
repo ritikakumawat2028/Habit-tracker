@@ -339,23 +339,45 @@ function AuthProvider({ children }: { children: React.ReactNode }) {
       method: "POST",
       body: JSON.stringify({ email, name }),
     });
-    if (!serverUser) {
-      // Backend offline — cannot create account, do not fake data
-      alert("Cannot connect to server. Please check your connection and try again.");
-      return;
+
+    if (serverUser) {
+      // ✅ Backend online — use real account
+      setUser(serverUser);
+      persist("gs_user", serverUser);
+      // Clear stale cache then pull fresh data
+      localStorage.removeItem("gs_tasks");
+      localStorage.removeItem("gs_notes");
+      localStorage.removeItem("gs_habits");
+      localStorage.removeItem("gs_partners");
+      setTasks([]); setNotes([]); setHabits([]); setPartners([]);
+      apiFetch<Task[]>("/tasks").then(data => { if (data) { setTasks(data); persist("gs_tasks", data); } });
+      apiFetch<Note[]>("/notes").then(data => { if (data) { setNotes(data); persist("gs_notes", data); } });
+      apiFetch<Habit[]>("/habits").then(data => { if (data) { setHabits(data); persist("gs_habits", data); } });
+      apiFetch<GrowthPartner[]>("/partners").then(data => { if (data) { setPartners(data); persist("gs_partners", data); } });
+    } else {
+      // ⚠️ Backend offline — create a local account so the app is still usable
+      const existingSaved = localStorage.getItem("gs_user");
+      const existingUser: UserData | null = existingSaved ? JSON.parse(existingSaved) : null;
+
+      // If same email is saved locally, reuse it
+      const localUser: UserData = (existingUser?.email === email)
+        ? existingUser!
+        : {
+            id: `local_${Date.now()}`,
+            name: name || email.split("@")[0] || "User",
+            email,
+            avatar: null,
+            bio: "Building better habits, one day at a time. 🚀",
+            level: 1,
+            xp: 0,
+            streak: 0,
+            joinDate: new Date().toLocaleString("en-US", { month: "long", year: "numeric" }),
+            goals: [],
+            inviteCode: `${(name || "USER").substring(0, 4).toUpperCase()}${Math.random().toString(36).substring(2, 6).toUpperCase()}`,
+          };
+      setUser(localUser);
+      persist("gs_user", localUser);
     }
-    setUser(serverUser);
-    persist("gs_user", serverUser);
-    // Clear old localStorage data, then pull fresh from backend
-    localStorage.removeItem("gs_tasks");
-    localStorage.removeItem("gs_notes");
-    localStorage.removeItem("gs_habits");
-    localStorage.removeItem("gs_partners");
-    setTasks([]); setNotes([]); setHabits([]); setPartners([]);
-    apiFetch<Task[]>("/tasks").then(data => { if (data) { setTasks(data); persist("gs_tasks", data); } });
-    apiFetch<Note[]>("/notes").then(data => { if (data) { setNotes(data); persist("gs_notes", data); } });
-    apiFetch<Habit[]>("/habits").then(data => { if (data) { setHabits(data); persist("gs_habits", data); } });
-    apiFetch<GrowthPartner[]>("/partners").then(data => { if (data) { setPartners(data); persist("gs_partners", data); } });
   }, [persist]);
 
   const logout = useCallback(() => {
