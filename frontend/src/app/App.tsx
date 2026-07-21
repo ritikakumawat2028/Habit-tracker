@@ -151,16 +151,39 @@ interface RewardItem {
 
 interface GrowthPartner {
   id: string;
+  friendUserId?: string;
   name: string;
   avatar: string | null;
   level: number;
   streak: number;
+  longestStreak?: number;
   xp: number;
   status: "online" | "offline";
   habits: { name: string; icon: string; done: boolean; streak: number }[];
   tasks: { title: string; done: boolean; priority: string }[];
   weekProgress: number[];
   inviteCode: string;
+  // Real stats from partner's account
+  healthScore?: number;
+  careerScore?: number;
+  productivityScore?: number;
+  habitCompletion?: number;
+  taskCompletion?: number;
+  focusHours?: number;
+  studyHours?: number;
+  codingHours?: number;
+  waterIntake?: number;
+  sleepHours?: number;
+  exercise?: number;
+  currentChallenge?: string;
+  currentRank?: string;
+  mood?: string;
+  completedTasks?: number;
+  pendingTasks?: number;
+  weeklyGoalsDone?: number;
+  weeklyGoalsTotal?: number;
+  monthlyGoalsDone?: number;
+  monthlyGoalsTotal?: number;
 }
 
 /* ══════════════════════════════════════════
@@ -185,19 +208,6 @@ function ThemeProvider({ children }: { children: React.ReactNode }) {
 const useTheme = () => useContext(ThemeCtx);
 
 // ── Auth ──
-const defaultUser: UserData = {
-  id: "u1",
-  name: "Alex Chen",
-  email: "alex@growsync.app",
-  avatar: null,
-  bio: "Building better habits, one day at a time. 🚀",
-  level: 12,
-  xp: 340,
-  streak: 23,
-  joinDate: "January 2025",
-  goals: ["fitness", "coding", "reading"],
-  inviteCode: "ALEX-X7K2",
-};
 
 const AuthCtx = createContext<{
   user: UserData | null;
@@ -231,7 +241,7 @@ const AuthCtx = createContext<{
   coins: number;
   addCoins: (c: number) => void;
   partners: GrowthPartner[];
-  addPartner: (code: string) => boolean | Promise<boolean>;
+  addPartner: (code: string) => Promise<{ ok: boolean; error?: string }>;
   removePartner: (id: string) => void | Promise<void>;
 }>({
   user: null, login: () => {}, logout: () => {}, updateUser: () => {},
@@ -244,77 +254,13 @@ const AuthCtx = createContext<{
   missions: [], toggleMission: () => {},
   rewards: [], buyReward: () => false,
   coins: 0, addCoins: () => {},
-  partners: [], addPartner: () => false, removePartner: () => {},
+  partners: [], addPartner: async () => ({ ok: false }), removePartner: () => {},
 });
 
-const DEMO_PARTNERS: GrowthPartner[] = [
-  {
-    id: "p1", name: "Jordan Park", avatar: null, level: 15, streak: 45, xp: 480, status: "online",
-    inviteCode: "JRDN-P4RK",
-    habits: [
-      { name: "Morning Run", icon: "🏃", done: true, streak: 45 },
-      { name: "Read 30 min", icon: "📚", done: true, streak: 38 },
-      { name: "Meditation", icon: "🧘", done: false, streak: 12 },
-      { name: "Cold Shower", icon: "🚿", done: true, streak: 20 },
-    ],
-    tasks: [
-      { title: "Review System Design notes", done: true, priority: "high" },
-      { title: "LeetCode 2 problems", done: false, priority: "high" },
-      { title: "Reply to recruiter email", done: false, priority: "medium" },
-    ],
-    weekProgress: [80, 70, 90, 85, 100, 60, 75],
-  },
-  {
-    id: "p2", name: "Maya Patel", avatar: null, level: 9, streak: 12, xp: 210, status: "offline",
-    inviteCode: "MAYA-P8TL",
-    habits: [
-      { name: "Yoga", icon: "🧘", done: true, streak: 12 },
-      { name: "Journaling", icon: "📝", done: false, streak: 8 },
-      { name: "No Sugar", icon: "🍎", done: true, streak: 5 },
-    ],
-    tasks: [
-      { title: "Finish portfolio redesign", done: false, priority: "high" },
-      { title: "30 min Spanish practice", done: true, priority: "medium" },
-    ],
-    weekProgress: [60, 55, 80, 65, 70, 45, 60],
-  },
-];
-
 function AuthProvider({ children }: { children: React.ReactNode }) {
-  const DEFAULT_TASKS: Task[] = [
-    { id: "t1", title: "Review System Design notes", note: "Focus on distributed systems chapter.", category: "Career", priority: "high", done: false, dueDate: "2026-06-17", createdAt: "2026-06-16" },
-    { id: "t2", title: "Buy groceries", note: "Oats, fruits, protein bars.", category: "Personal", priority: "medium", done: true, dueDate: "2026-06-17", createdAt: "2026-06-16" },
-    { id: "t3", title: "Call mom", note: "", category: "Personal", priority: "low", done: false, dueDate: "2026-06-18", createdAt: "2026-06-16" },
-    { id: "t4", title: "Submit PR for auth module", note: "Make sure tests pass first.", category: "Career", priority: "high", done: false, dueDate: "2026-06-18", createdAt: "2026-06-17" },
-  ];
-  const DEFAULT_NOTES: Note[] = [
-    { id: "n1", title: "Morning Routine Tips", body: "Wake up at 6 AM, drink water first, stretch for 5 min before checking phone.", color: "violet", pinned: true, createdAt: "2026-06-15" },
-    { id: "n2", title: "Books to Read", body: "Atomic Habits, Deep Work, The Almanack of Naval Ravikant, Can't Hurt Me.", color: "pink", pinned: false, createdAt: "2026-06-14" },
-    { id: "n3", title: "Workout Split", body: "Mon: Push, Tue: Pull, Wed: Legs, Thu: Push, Fri: Pull, Sat: Legs, Sun: Rest.", color: "emerald", pinned: false, createdAt: "2026-06-13" },
-  ];
-  const DEFAULT_HABITS: Habit[] = [
-    { id: 1, name: "Morning Run", category: "Fitness", icon: "🏃", priority: "high", freq: "Daily", streak: 23, target: "30 min", completedToday: true },
-    { id: 2, name: "Read Books", category: "Reading", icon: "📚", priority: "high", freq: "Daily", streak: 15, target: "30 min", completedToday: true },
-    { id: 3, name: "Drink Water", category: "Hydration", icon: "💧", priority: "medium", freq: "Daily", streak: 8, target: "8 glasses", completedToday: false },
-    { id: 4, name: "Code Practice", category: "Career", icon: "💻", priority: "high", freq: "Daily", streak: 31, target: "1 hour", completedToday: false },
-    { id: 5, name: "Meditation", category: "Mental Health", icon: "🧘", priority: "medium", freq: "Daily", streak: 7, target: "10 min", completedToday: true },
-    { id: 6, name: "Sleep 8 Hours", category: "Sleep", icon: "🌙", priority: "high", freq: "Daily", streak: 5, target: "8 hours", completedToday: false },
-  ];
-  const DEFAULT_GOALS: GoalItem[] = [
-    { id: "g1", title: "Read 24 books this year", timeframe: "year", progress: 45, milestones: ["Read 12 books", "Read 18 books"], dueDate: "2026-12-31" },
-    { id: "g2", title: "Complete Advanced React Course", timeframe: "quarter", progress: 75, milestones: ["Watch all videos", "Build 3 projects"], dueDate: "2026-09-30" },
-    { id: "g3", title: "Run 50km this month", timeframe: "month", progress: 60, milestones: ["Run 20km", "Run 40km"], dueDate: "2026-07-31" }
-  ];
-  const DEFAULT_JOURNALS: JournalEntry[] = [
-    { id: "j1", date: "2026-07-17", mood: "😄", wins: "Completed React authorization logic.", challenges: "Underestimated roadmap steps layout complexity.", gratitude: "Thankful for teammate code review.", lessons: "Split large features into micro-tasks." }
-  ];
-  const DEFAULT_FOCUS: FocusSession[] = [
-    { id: "f1", date: "2026-07-17", duration: 50, category: "Coding" },
-    { id: "f2", date: "2026-07-16", duration: 30, category: "Reading" }
-  ];
   const DEFAULT_MISSIONS: DailyMission[] = [
     { id: "m1", title: "Complete 2 daily tasks", rewardCoins: 15, rewardXp: 40, done: false },
-    { id: "m2", title: "Drink at least 4 glasses of water", rewardCoins: 10, rewardXp: 20, done: true },
+    { id: "m2", title: "Drink at least 4 glasses of water", rewardCoins: 10, rewardXp: 20, done: false },
     { id: "m3", title: "Do a 10 min mindfulness session", rewardCoins: 20, rewardXp: 50, done: false }
   ];
   const DEFAULT_REWARDS: RewardItem[] = [
@@ -328,29 +274,30 @@ function AuthProvider({ children }: { children: React.ReactNode }) {
     const saved = localStorage.getItem("gs_user");
     return saved ? JSON.parse(saved) : null;
   });
+  // All data starts empty — synced from backend after login
   const [tasks, setTasks] = useState<Task[]>(() => {
     const saved = localStorage.getItem("gs_tasks");
-    return saved ? JSON.parse(saved) : DEFAULT_TASKS;
+    return saved ? JSON.parse(saved) : [];
   });
   const [notes, setNotes] = useState<Note[]>(() => {
     const saved = localStorage.getItem("gs_notes");
-    return saved ? JSON.parse(saved) : DEFAULT_NOTES;
+    return saved ? JSON.parse(saved) : [];
   });
   const [habits, setHabits] = useState<Habit[]>(() => {
     const saved = localStorage.getItem("gs_habits");
-    return saved ? JSON.parse(saved) : DEFAULT_HABITS;
+    return saved ? JSON.parse(saved) : [];
   });
   const [goalsList, setGoalsList] = useState<GoalItem[]>(() => {
     const saved = localStorage.getItem("gs_goals");
-    return saved ? JSON.parse(saved) : DEFAULT_GOALS;
+    return saved ? JSON.parse(saved) : [];
   });
   const [journals, setJournals] = useState<JournalEntry[]>(() => {
     const saved = localStorage.getItem("gs_journals");
-    return saved ? JSON.parse(saved) : DEFAULT_JOURNALS;
+    return saved ? JSON.parse(saved) : [];
   });
   const [focusSessions, setFocusSessions] = useState<FocusSession[]>(() => {
     const saved = localStorage.getItem("gs_focus");
-    return saved ? JSON.parse(saved) : DEFAULT_FOCUS;
+    return saved ? JSON.parse(saved) : [];
   });
   const [missions, setMissions] = useState<DailyMission[]>(() => {
     const saved = localStorage.getItem("gs_missions");
@@ -362,11 +309,11 @@ function AuthProvider({ children }: { children: React.ReactNode }) {
   });
   const [coins, setCoins] = useState<number>(() => {
     const saved = localStorage.getItem("gs_coins");
-    return saved ? Number(saved) : 120;
+    return saved ? Number(saved) : 0;
   });
   const [partners, setPartners] = useState<GrowthPartner[]>(() => {
     const saved = localStorage.getItem("gs_partners");
-    return saved ? JSON.parse(saved) : [DEMO_PARTNERS[0]];
+    return saved ? JSON.parse(saved) : [];
   });
 
   const persist = useCallback((key: string, val: unknown) => localStorage.setItem(key, JSON.stringify(val)), []);
@@ -388,15 +335,23 @@ function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [persist]);
 
   const login = useCallback(async (email: string, name?: string) => {
-    // Try backend first, fall back to local
     const serverUser = await apiFetch<UserData>("/auth/login", {
       method: "POST",
       body: JSON.stringify({ email, name }),
     });
-    const u = serverUser ?? { ...defaultUser, email, name: name || defaultUser.name };
-    setUser(u);
-    persist("gs_user", u);
-    // Load fresh data from backend after login
+    if (!serverUser) {
+      // Backend offline — cannot create account, do not fake data
+      alert("Cannot connect to server. Please check your connection and try again.");
+      return;
+    }
+    setUser(serverUser);
+    persist("gs_user", serverUser);
+    // Clear old localStorage data, then pull fresh from backend
+    localStorage.removeItem("gs_tasks");
+    localStorage.removeItem("gs_notes");
+    localStorage.removeItem("gs_habits");
+    localStorage.removeItem("gs_partners");
+    setTasks([]); setNotes([]); setHabits([]); setPartners([]);
     apiFetch<Task[]>("/tasks").then(data => { if (data) { setTasks(data); persist("gs_tasks", data); } });
     apiFetch<Note[]>("/notes").then(data => { if (data) { setNotes(data); persist("gs_notes", data); } });
     apiFetch<Habit[]>("/habits").then(data => { if (data) { setHabits(data); persist("gs_habits", data); } });
@@ -453,23 +408,31 @@ function AuthProvider({ children }: { children: React.ReactNode }) {
     await apiFetch(`/notes/${id}`, { method: "DELETE" });
   }, [persist]);
 
-  const addPartner = useCallback(async (code: string) => {
-    // Try backend
+  const addPartner = useCallback(async (code: string): Promise<{ ok: boolean; error?: string }> => {
     const serverPartner = await apiFetch<GrowthPartner>("/partners/invite", {
       method: "POST",
       body: JSON.stringify({ code }),
     });
     if (serverPartner) {
       setPartners(ps => { const next = [...ps, serverPartner]; persist("gs_partners", next); return next; });
-      return true;
+      return { ok: true };
     }
-    // Fallback: check DEMO_PARTNERS
-    const demo = DEMO_PARTNERS.find(p => p.inviteCode === code.toUpperCase());
-    if (!demo) return false;
-    if (partners.find(p => p.id === demo.id)) return false;
-    setPartners(ps => { const next = [...ps, demo]; persist("gs_partners", next); return next; });
-    return true;
-  }, [partners, persist]);
+    // Backend returned an error response — fetch the error text
+    try {
+      const errRes = await fetch(`${API_URL}/partners/invite`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...((() => { try { const u = JSON.parse(localStorage.getItem("gs_user") || ""); return u?.id ? { Authorization: `Bearer ${u.id}` } : {}; } catch { return {}; } })())
+        },
+        body: JSON.stringify({ code }),
+      });
+      const errData = await errRes.json();
+      return { ok: false, error: errData?.error || "Failed to connect. Please check the invite code." };
+    } catch {
+      return { ok: false, error: "Server is offline. Please try again later." };
+    }
+  }, [persist]);
 
   const removePartner = useCallback(async (id: string) => {
     setPartners(ps => { const next = ps.filter(p => p.id !== id); persist("gs_partners", next); return next; });
@@ -1932,18 +1895,22 @@ function FriendsView() {
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const tryInvite = () => {
-    const ok = addPartner(inviteCode);
-    if (ok) {
-      setInviteMsg({ ok: true, msg: "Growth partner connected successfully!" });
+  const tryInvite = async () => {
+    if (!inviteCode.trim()) return;
+    setInviteMsg({ ok: false, msg: "Connecting..." });
+    const result = await addPartner(inviteCode.trim());
+    if ((result as any)?.ok || result === true) {
+      setInviteMsg({ ok: true, msg: "Growth partner connected successfully! 🎉" });
       setInviteCode("");
+      // Select the newly added partner
       setTimeout(() => {
-        if (partners.length > 0) setSelectedPartner(partners[partners.length - 1]);
-      }, 500);
+        setSelectedPartner(partners[partners.length - 1] || null);
+      }, 600);
     } else {
-      setInviteMsg({ ok: false, msg: "Invalid code. Try JRDN-P4RK or MAYA-P8TL" });
+      const errMsg = (result as any)?.error || "Invalid code. Please check and try again.";
+      setInviteMsg({ ok: false, msg: errMsg });
     }
-    setTimeout(() => setInviteMsg(null), 4000);
+    setTimeout(() => setInviteMsg(null), 5000);
   };
 
   // Structured profiles data representing LEFT and RIGHT users
@@ -1978,99 +1945,36 @@ function FriendsView() {
     currentRank: "Gold III"
   };
 
-  // Partner fallback or dynamic mappings
-  const partnerProfiles: Record<string, typeof userProfile> = {
-    "p1": {
-      avatar: null,
-      name: "Jordan Park",
-      level: 15,
-      xp: 480,
-      currentStreak: 45,
-      longestStreak: 60,
-      healthScore: 90,
-      careerScore: 84,
-      productivityScore: 88,
-      focusHours: 22.5,
-      habitCompletion: 92,
-      taskCompletion: 85,
-      studyHours: 56.0,
-      codingHours: 45,
-      waterIntake: 8,
-      sleepHours: 8.0,
-      exercise: 60,
-      mood: "😊 Good",
-      achievements: 12,
-      weeklyGoalsDone: 5,
-      weeklyGoalsTotal: 5,
-      monthlyGoalsDone: 9,
-      monthlyGoalsTotal: 10,
-      completedTasks: 36,
-      pendingTasks: 2,
-      missedTasks: 0,
-      currentChallenge: "Code Every Day",
-      currentRank: "Platinum II"
-    },
-    "p2": {
-      avatar: null,
-      name: "Maya Patel",
-      level: 9,
-      xp: 210,
-      currentStreak: 12,
-      longestStreak: 18,
-      healthScore: 78,
-      careerScore: 70,
-      productivityScore: 72,
-      focusHours: 10.5,
-      habitCompletion: 75,
-      taskCompletion: 65,
-      studyHours: 28.0,
-      codingHours: 18,
-      waterIntake: 5,
-      sleepHours: 7.0,
-      exercise: 30,
-      mood: "🧘 Calm",
-      achievements: 5,
-      weeklyGoalsDone: 3,
-      weeklyGoalsTotal: 5,
-      monthlyGoalsDone: 6,
-      monthlyGoalsTotal: 10,
-      completedTasks: 15,
-      pendingTasks: 5,
-      missedTasks: 2,
-      currentChallenge: "Bookworm Sprint",
-      currentRank: "Silver I"
-    }
-  };
-
-  const partnerProfile = (currentPartner && partnerProfiles[currentPartner.id]) || {
+  // Build partner profile from REAL data returned by the server
+  const partnerProfile = {
     avatar: currentPartner?.avatar || null,
     name: currentPartner?.name || "Growth Friend",
     level: currentPartner?.level || 1,
-    xp: currentPartner?.xp || 10,
+    xp: currentPartner?.xp || 0,
     currentStreak: currentPartner?.streak || 0,
-    longestStreak: currentPartner?.streak || 10,
-    healthScore: 70,
-    careerScore: 65,
-    productivityScore: 60,
-    focusHours: 8,
-    habitCompletion: 60,
-    taskCompletion: 50,
-    studyHours: 10,
-    codingHours: 5,
-    waterIntake: 4,
-    sleepHours: 6.5,
-    exercise: 20,
-    mood: "😐 Okay",
-    achievements: 2,
-    weeklyGoalsDone: 2,
-    weeklyGoalsTotal: 5,
-    monthlyGoalsDone: 4,
-    monthlyGoalsTotal: 10,
-    completedTasks: 10,
-    pendingTasks: 5,
-    missedTasks: 3,
-    currentChallenge: "Not Started",
-    currentRank: "Bronze II"
+    longestStreak: currentPartner?.longestStreak || currentPartner?.streak || 0,
+    healthScore: currentPartner?.healthScore ?? 50,
+    careerScore: currentPartner?.careerScore ?? 50,
+    productivityScore: currentPartner?.productivityScore ?? 50,
+    focusHours: currentPartner?.focusHours ?? 0,
+    habitCompletion: currentPartner?.habitCompletion ?? 0,
+    taskCompletion: currentPartner?.taskCompletion ?? 0,
+    studyHours: currentPartner?.studyHours ?? 0,
+    codingHours: currentPartner?.codingHours ?? 0,
+    waterIntake: currentPartner?.waterIntake ?? 0,
+    sleepHours: currentPartner?.sleepHours ?? 7,
+    exercise: currentPartner?.exercise ?? 0,
+    mood: currentPartner?.mood ?? "😐 Okay",
+    achievements: currentPartner?.habits?.filter(h => h.done).length || 0,
+    weeklyGoalsDone: currentPartner?.weeklyGoalsDone ?? 0,
+    weeklyGoalsTotal: currentPartner?.weeklyGoalsTotal ?? 5,
+    monthlyGoalsDone: currentPartner?.monthlyGoalsDone ?? 0,
+    monthlyGoalsTotal: currentPartner?.monthlyGoalsTotal ?? 10,
+    completedTasks: currentPartner?.completedTasks ?? 0,
+    pendingTasks: currentPartner?.pendingTasks ?? 0,
+    missedTasks: 0,
+    currentChallenge: currentPartner?.currentChallenge ?? "None",
+    currentRank: currentPartner?.currentRank ?? "Bronze I",
   };
 
   // Comparative charts data
@@ -2607,14 +2511,14 @@ function FriendsView() {
             <p className="text-xs font-bold text-foreground/65">Connect Friend</p>
             <div className="flex gap-2">
               <Input
-                placeholder="Enter invite code (e.g. JRDN-P4RK)"
+                placeholder="Enter your friend's invite code"
                 value={inviteCode}
                 onChange={e => setInviteCode(e.target.value.toUpperCase())}
                 className="font-['JetBrains_Mono'] tracking-widest text-xs"
               />
               <button
                 onClick={tryInvite}
-                disabled={inviteCode.length < 4}
+                disabled={inviteCode.length < 6}
                 className="bg-primary text-white px-4 rounded-xl text-xs font-bold transition-all disabled:opacity-40"
               >
                 Connect
@@ -2625,9 +2529,9 @@ function FriendsView() {
                 {inviteMsg.msg}
               </p>
             )}
-            <div className="text-[10px] text-foreground/40 font-medium">
-              Demo codes to test: <button onClick={() => setInviteCode("JRDN-P4RK")} className="text-primary hover:underline font-bold">JRDN-P4RK (Jordan)</button> or <button onClick={() => setInviteCode("MAYA-P8TL")} className="text-primary hover:underline font-bold">MAYA-P8TL (Maya)</button>
-            </div>
+            <p className="text-[10px] text-foreground/40 font-medium">
+              Share your code above with a friend, then enter their code here to connect.
+            </p>
           </div>
         </div>
       </Card>

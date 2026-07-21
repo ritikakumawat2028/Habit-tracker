@@ -1,4 +1,14 @@
 import mongoose, { Schema, Document } from 'mongoose';
+import crypto from 'crypto';
+
+/* ══════════════════════════════════════════
+   HELPERS
+   ══════════════════════════════════════════ */
+
+/** Generate a cryptographically random 8-char hex code e.g. A3F9B2D1 */
+function makeInviteCode(): string {
+  return crypto.randomBytes(4).toString('hex').toUpperCase();
+}
 
 /* ══════════════════════════════════════════
    USER MODEL
@@ -11,9 +21,23 @@ export interface IUser extends Document {
   level: number;
   xp: number;
   streak: number;
+  longestStreak: number;
   joinDate: string;
   goals: string[];
   inviteCode: string;
+  // Self-reported / computed stats (updated via profile PUT)
+  healthScore: number;
+  careerScore: number;
+  productivityScore: number;
+  focusHours: number;
+  studyHours: number;
+  codingHours: number;
+  waterIntake: number;
+  sleepHours: number;
+  exercise: number;
+  currentChallenge: string;
+  currentRank: string;
+  mood: string;
 }
 
 const UserSchema = new Schema<IUser>({
@@ -22,14 +46,39 @@ const UserSchema = new Schema<IUser>({
   avatar: { type: String, default: null },
   bio: { type: String, default: 'Building better habits, one day at a time. 🚀' },
   level: { type: Number, default: 1 },
-  xp: { type: Number, default: 10 },
-  streak: { type: Number, default: 1 },
+  xp: { type: Number, default: 0 },
+  streak: { type: Number, default: 0 },
+  longestStreak: { type: Number, default: 0 },
   joinDate: { type: String, required: true },
   goals: { type: [String], default: [] },
-  inviteCode: { type: String, required: true, unique: true },
+  inviteCode: { type: String, unique: true, sparse: true },
+  healthScore: { type: Number, default: 50 },
+  careerScore: { type: Number, default: 50 },
+  productivityScore: { type: Number, default: 50 },
+  focusHours: { type: Number, default: 0 },
+  studyHours: { type: Number, default: 0 },
+  codingHours: { type: Number, default: 0 },
+  waterIntake: { type: Number, default: 0 },
+  sleepHours: { type: Number, default: 7 },
+  exercise: { type: Number, default: 0 },
+  currentChallenge: { type: String, default: 'None' },
+  currentRank: { type: String, default: 'Bronze I' },
+  mood: { type: String, default: '😐 Okay' },
 }, { timestamps: true });
 
-// Transform output to match frontend expectations
+// Auto-assign a unique invite code before first save
+UserSchema.pre('save', async function (next) {
+  if (!this.inviteCode) {
+    const UserModel = this.constructor as mongoose.Model<IUser>;
+    let code = makeInviteCode();
+    while (await UserModel.exists({ inviteCode: code })) {
+      code = makeInviteCode();
+    }
+    this.inviteCode = code;
+  }
+  next();
+});
+
 UserSchema.set('toJSON', {
   virtuals: true,
   transform: (doc, ret) => {
@@ -143,38 +192,30 @@ HabitSchema.set('toJSON', {
 export const Habit = mongoose.model<IHabit>('Habit', HabitSchema);
 
 /* ══════════════════════════════════════════
-   PARTNER MODEL (Mock)
+   FRIEND CONNECTION MODEL
+   Real two-way friendship record.
+   Each connection is stored once per user (user A stores a record
+   pointing to user B, and vice-versa when B connects back).
    ══════════════════════════════════════════ */
-export interface IPartner extends Document {
-  userId: mongoose.Types.ObjectId;
-  name: string;
-  avatar: string | null;
-  level: number;
-  streak: number;
-  xp: number;
-  status: 'online' | 'offline';
-  inviteCode: string;
-  habits: any[];
-  tasks: any[];
-  weekProgress: number[];
+export interface IFriendConnection extends Document {
+  userId: mongoose.Types.ObjectId;        // The user who initiated the connection
+  friendUserId: mongoose.Types.ObjectId;  // The friend they connected with
+  friendInviteCode: string;               // Invite code used at connection time
+  connectedAt: string;
 }
 
-const PartnerSchema = new Schema<IPartner>({
+const FriendConnectionSchema = new Schema<IFriendConnection>({
   userId: { type: Schema.Types.ObjectId, ref: 'User', required: true },
-  name: { type: String, required: true },
-  avatar: { type: String, default: null },
-  level: { type: Number, default: 1 },
-  streak: { type: Number, default: 0 },
-  xp: { type: Number, default: 0 },
-  status: { type: String, enum: ['online', 'offline'], default: 'offline' },
-  inviteCode: { type: String, required: true },
-  habits: { type: [Schema.Types.Mixed], default: [] },
-  tasks: { type: [Schema.Types.Mixed], default: [] },
-  weekProgress: { type: [Number], default: [] }
+  friendUserId: { type: Schema.Types.ObjectId, ref: 'User', required: true },
+  friendInviteCode: { type: String, required: true },
+  connectedAt: { type: String, required: true },
 });
 
-PartnerSchema.set('toJSON', {
+// Prevent duplicate connections from the same user to same friend
+FriendConnectionSchema.index({ userId: 1, friendUserId: 1 }, { unique: true });
+
+FriendConnectionSchema.set('toJSON', {
   virtuals: true,
   transform: (doc, ret) => { ret.id = ret._id; delete ret._id; delete ret.__v; }
 });
-export const Partner = mongoose.model<IPartner>('Partner', PartnerSchema);
+export const FriendConnection = mongoose.model<IFriendConnection>('FriendConnection', FriendConnectionSchema);
