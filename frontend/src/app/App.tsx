@@ -796,11 +796,21 @@ function AuthPage({ onNavigate }: { onNavigate: (v: View) => void }) {
   const [email, setEmail] = useState("");
   const [err, setErr] = useState("");
 
+  const [loading, setLoading] = useState(false);
+
   const submit = async () => {
     if (!email.includes("@")) { setErr("Enter a valid email."); return; }
     if (mode === "signup" && !name.trim()) { setErr("Enter your name."); return; }
-    await login(email, name || undefined);
-    onNavigate(mode === "signup" ? "onboarding" : "dashboard");
+    setLoading(true);
+    setErr("");
+    try {
+      await login(email, name || undefined);
+      onNavigate(mode === "signup" ? "onboarding" : "dashboard");
+    } catch {
+      setErr("Failed to login. Please check your details.");
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -882,9 +892,19 @@ function AuthPage({ onNavigate }: { onNavigate: (v: View) => void }) {
 
             <button 
               type="submit" 
-              className="w-full py-3.5 mt-4 rounded-xl bg-gradient-to-r from-primary to-accent hover:opacity-90 text-white font-bold text-sm shadow-lg shadow-primary/25 transition-all flex items-center justify-center gap-2 hover:scale-[1.01] active:scale-[0.98]"
+              disabled={loading}
+              className={`w-full py-3.5 mt-4 rounded-xl bg-gradient-to-r from-primary to-accent hover:opacity-90 text-white font-bold text-sm shadow-lg shadow-primary/25 transition-all flex items-center justify-center gap-2 hover:scale-[1.01] active:scale-[0.98] ${loading ? "opacity-60 cursor-not-allowed" : ""}`}
             >
-              {mode === "login" ? "Log In to Dashboard" : "Create My Account"} <ArrowRight size={16} />
+              {loading ? (
+                <div className="flex items-center gap-2">
+                  <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                  <span>{mode === "login" ? "Logging In..." : "Creating Account..."}</span>
+                </div>
+              ) : (
+                <>
+                  {mode === "login" ? "Log In to Dashboard" : "Create My Account"} <ArrowRight size={16} />
+                </>
+              )}
             </button>
           </form>
         </div>
@@ -3825,7 +3845,11 @@ function Inner() {
 
   // sync to auth state
   useEffect(() => {
-    if (!user && view !== "landing" && view !== "login" && view !== "onboarding") setView("landing");
+    if (!user && view !== "landing" && view !== "login" && view !== "onboarding") {
+      setView("landing");
+    } else if (user && view === "landing") {
+      setView("dashboard");
+    }
   }, [user, view]);
 
   if (view === "landing") return <LandingPage onNavigate={setView} />;

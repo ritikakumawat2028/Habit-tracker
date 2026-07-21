@@ -25,13 +25,18 @@ app.get('/health-check', (req, res) => {
   res.json({ status: 'ok', time: new Date() });
 });
 
-mongoose.connect(process.env.MONGODB_URI as string)
+// Start Express server right away so local API endpoints respond instantly
+app.listen(PORT, () => {
+  console.log(`🚀 GrowSync Backend running on http://localhost:${PORT}`);
+});
+
+mongoose.connect(process.env.MONGODB_URI as string, {
+  serverSelectionTimeoutMS: 3000,
+  bufferCommands: false,
+})
   .then(() => {
     console.log('✅ Connected to MongoDB');
-    app.listen(PORT, () => {
-      console.log(`🚀 GrowSync Backend running on http://localhost:${PORT}`);
-    });
   })
   .catch((err) => {
-    console.error('❌ Failed to connect to MongoDB', err);
+    console.error('❌ Failed to connect to MongoDB. Backend running in offline/fallback mode.', err.message || err);
   });

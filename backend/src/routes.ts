@@ -1,5 +1,6 @@
-﻿import { Router, Request, Response, NextFunction } from 'express';
+import { Router, Request, Response, NextFunction } from 'express';
 import { User, Task, Note, Habit, FriendConnection } from './models';
+import mongoose from 'mongoose';
 
 const router = Router();
 
@@ -87,6 +88,9 @@ async function buildPartnerPayload(friendUser: any, connectionId: string) {
    â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
 router.post('/auth/login', async (req: Request, res: Response) => {
   try {
+    if (mongoose.connection.readyState !== 1) {
+      return res.status(503).json({ error: 'MongoDB connection is offline' });
+    }
     const { email, name } = req.body;
     if (!email) return res.status(400).json({ error: 'Email is required' });
 
