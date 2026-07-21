@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, createContext, useContext, useCallback } from "react";
+import { useState, useEffect, useRef, createContext, useContext, useCallback, useMemo } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
@@ -14,7 +14,8 @@ import {
   UserPlus, Check, Pencil, Trash2, ChevronLeft, MoreHorizontal,
   Target, Clock, HelpCircle, Sun, StickyNote, ListTodo,
   LogOut, Camera, Save, Link2, Copy, Shield, Trophy, Send,
-  User, Edit3, AlertCircle, RefreshCw, Minus
+  User, Edit3, AlertCircle, RefreshCw, Minus, Award, Folder,
+  Pause, Archive, PlusCircle, FileText
 } from "lucide-react";
 
 /* ══════════════════════════════════════════
@@ -274,7 +275,7 @@ const useTheme = () => useContext(ThemeCtx);
 
 // ── Auth ──
 
-const AuthCtx = createContext<{
+export const AuthCtx = createContext<{
   user: UserData | null;
   login: (email: string, name?: string) => void | Promise<void>;
   logout: () => void;
@@ -359,7 +360,7 @@ function loadArray<T>(key: string, fallback: T[]): T[] {
   }
 }
 
-function AuthProvider({ children }: { children: React.ReactNode }) {
+export function AuthProvider({ children }: { children: React.ReactNode }) {
   const DEFAULT_MISSIONS: DailyMission[] = [
     { id: "m1", title: "Complete 2 daily tasks", rewardCoins: 15, rewardXp: 40, done: false },
     { id: "m2", title: "Drink at least 4 glasses of water", rewardCoins: 10, rewardXp: 20, done: false },
@@ -1703,7 +1704,7 @@ const activityData = [
   { day: "Sun", value: 70, focus: 3.2, xp: 150 },
 ];
 
-function DashboardView({ onNavigate, onQuickAdd }: { onNavigate: (v: View) => void; onQuickAdd: () => void }) {
+export function DashboardView({ onNavigate, onQuickAdd }: { onNavigate: (v: View) => void; onQuickAdd: () => void }) {
   const { user, tasks, updateTask, habits, updateHabit, partners, coins, addCoins, generateCustomPlan, updateUser, growthPlans, activePlanId, selectGrowthPlan } = useAuth();
   
   // Local state for dashboard widgets
@@ -2322,7 +2323,7 @@ function DashboardView({ onNavigate, onQuickAdd }: { onNavigate: (v: View) => vo
 /* ══════════════════════════════════════════
    MY TASKS VIEW
 ══════════════════════════════════════════ */
-function TasksView() {
+export function TasksView() {
   const { tasks, addTask, updateTask, deleteTask, notes, addNote, updateNote, deleteNote, growthPlans, activePlanId } = useAuth();
   const [subTab, setSubTab] = useState<"tasks" | "notes">("tasks");
   const [viewMode, setViewMode] = useState<"list" | "kanban" | "calendar">("list");
@@ -2964,7 +2965,7 @@ function TasksView() {
 /* ══════════════════════════════════════════
    FRIENDS — GROW TOGETHER VIEW
 ══════════════════════════════════════════ */
-function FriendsView() {
+export function FriendsView() {
   const { user, partners, addPartner, removePartner, habits, tasks, focusSessions, learningCourses, healthLogs, careerApps, goalsList } = useAuth();
   const [inviteCode, setInviteCode] = useState("");
   const [inviteMsg, setInviteMsg] = useState<{ ok: boolean; msg: string } | null>(null);
@@ -3802,7 +3803,7 @@ function FriendsView() {
 /* ══════════════════════════════════════════
    PROFILE VIEW
 ══════════════════════════════════════════ */
-function ProfileView({ onNavigate }: { onNavigate: (v: View) => void }) {
+export function ProfileView({ onNavigate }: { onNavigate: (v: View) => void }) {
   const { user, updateUser, logout } = useAuth();
   const fileRef = useRef<HTMLInputElement>(null);
   const [editing, setEditing] = useState(false);
@@ -3927,7 +3928,7 @@ function ProfileView({ onNavigate }: { onNavigate: (v: View) => void }) {
 /* ══════════════════════════════════════════
    REMAINING VIEWS (condensed)
 ══════════════════════════════════════════ */
-function HabitsView() {
+export function HabitsView() {
   const { habits, addHabit, updateHabit, deleteHabit, growthPlans, activePlanId } = useAuth();
   const [filterCat, setFilterCat] = useState("All");
   const [filterStatus, setFilterStatus] = useState<"active" | "paused" | "archived">("active");
@@ -4273,7 +4274,7 @@ function HabitsView() {
   );
 }
 
-function HealthView() {
+export function HealthView() {
   const { healthLogs, updateTodayHealth } = useAuth();
   const todayLog = healthLogs[0] || { date: new Date().toISOString().split("T")[0], waterMl: 1500, sleepHours: 7.5, workoutMins: 45, mood: "😊", notes: "" };
   const [waterCups, setWaterCups] = useState(Math.round((todayLog.waterMl || 0) / 250));
@@ -4366,7 +4367,7 @@ function HealthView() {
   );
 }
 
-function CareerView() {
+export function CareerView() {
   const { careerApps, addCareerApp, updateCareerAppStage, deleteCareerApp } = useAuth();
   const [showAddModal, setShowAddModal] = useState(false);
   const [company, setCompany] = useState("");
@@ -4551,7 +4552,7 @@ function CareerView() {
   );
 }
 
-function FocusView() {
+export function FocusView() {
   const { addFocusSession } = useAuth();
   const [duration, setDuration] = useState(25); // mins
   const [timeLeft, setTimeLeft] = useState(25 * 60);
@@ -4651,7 +4652,7 @@ function FocusView() {
   );
 }
 
-function GoalsView() {
+export function GoalsView() {
   const { goalsList, addGoal, deleteGoal } = useAuth();
   const [title, setTitle] = useState("");
   const [tf, setTf] = useState<"year" | "quarter" | "month">("month");
@@ -4732,7 +4733,7 @@ function GoalsView() {
   );
 }
 
-function LearningView() {
+export function LearningView() {
   const { learningSteps, toggleLearningStep, addLearningStep, learningCourses, addLearningCourse, toggleCourseComplete } = useAuth();
   const [showAddStep, setShowAddStep] = useState(false);
   const [stepTitle, setStepTitle] = useState("");
@@ -4849,7 +4850,7 @@ function LearningView() {
   );
 }
 
-function JournalView() {
+export function JournalView() {
   const { journals, addJournal, updateJournal, deleteJournal, notes, addNote, updateNote, deleteNote, growthPlans, activePlanId } = useAuth();
   
   // Tab and Folder state
@@ -5468,7 +5469,7 @@ function JournalView() {
   );
 }
 
-function TimeTrackerView() {
+export function TimeTrackerView() {
   const { focusSessions } = useAuth();
   const [seconds, setSeconds] = useState(0);
   const [active, setActive] = useState(false);
@@ -5537,7 +5538,7 @@ function TimeTrackerView() {
   );
 }
 
-function AchievementsView() {
+export function AchievementsView() {
   const { user, coins, rewards, buyReward, tasks, habits, focusSessions, journals, growthPlans } = useAuth();
   
   // 1. Dynamic Level & Season Pass Tier calculations
@@ -5765,7 +5766,7 @@ function AchievementsView() {
   );
 }
 
-function AnalyticsView() {
+export function AnalyticsView() {
   const { user, habits, tasks, focusSessions, journals, notes, healthLogs, growthPlans } = useAuth();
 
   // 1. Real KPI Summary Metrics
@@ -6044,7 +6045,7 @@ function AnalyticsView() {
   );
 }
 
-function ChallengesView() {
+export function ChallengesView() {
   const [joined, setJoined] = useState<number[]>([1]);
   const challenges = [
     { id: 1, name: "30-Day Hydration Challenge", icon: "💧", participants: 1247, duration: "30 days", xp: 500, difficulty: "Easy", desc: "Drink 8 glasses of water daily for 30 consecutive days." },
