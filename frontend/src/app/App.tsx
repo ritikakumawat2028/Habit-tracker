@@ -69,6 +69,17 @@ interface UserData {
   inviteCode: string;
 }
 
+interface GrowthPlan {
+  id: string;
+  title: string;
+  category: string;
+  description: string;
+  targetDate: string;
+  progress: number;
+  active: boolean;
+  createdAt: string;
+}
+
 interface Task {
   id: string;
   title: string;
@@ -83,6 +94,10 @@ interface Task {
   reminder?: boolean;
   tags?: string;
   recurring?: "none" | "daily" | "weekly" | "monthly";
+  difficulty?: "Easy" | "Medium" | "Hard";
+  subtasks?: { id: string; title: string; done: boolean }[];
+  dependencies?: string[];
+  planId?: string;
 }
 
 interface Note {
@@ -92,6 +107,8 @@ interface Note {
   color: string;
   pinned: boolean;
   createdAt: string;
+  folder?: string;
+  planId?: string;
 }
 
 interface Habit {
@@ -102,8 +119,15 @@ interface Habit {
   priority: "high" | "medium" | "low";
   freq: string;
   streak: number;
+  longestStreak?: number;
   target: string;
   completedToday: boolean;
+  consistencyScore?: number;
+  history?: string[];
+  paused?: boolean;
+  archived?: boolean;
+  notes?: string;
+  planId?: string;
 }
 
 interface GoalItem {
@@ -113,6 +137,7 @@ interface GoalItem {
   progress: number;
   milestones: string[];
   dueDate: string;
+  planId?: string;
 }
 
 interface JournalEntry {
@@ -123,6 +148,10 @@ interface JournalEntry {
   challenges: string;
   gratitude: string;
   lessons: string;
+  folder?: string;
+  pinned?: boolean;
+  tags?: string[];
+  planId?: string;
 }
 
 interface FocusSession {
@@ -130,6 +159,7 @@ interface FocusSession {
   date: string;
   duration: number; // minutes
   category: string;
+  planId?: string;
 }
 
 interface DailyMission {
@@ -199,6 +229,7 @@ interface LearningCourse {
   category: string;
   hours: number;
   completed: boolean;
+  planId?: string;
 }
 
 interface CareerApp {
@@ -266,6 +297,8 @@ const AuthCtx = createContext<{
   deleteGoal: (id: string) => void;
   journals: JournalEntry[];
   addJournal: (j: Omit<JournalEntry, "id" | "date">) => void;
+  updateJournal: (id: string, patch: Partial<JournalEntry>) => void;
+  deleteJournal: (id: string) => void;
   focusSessions: FocusSession[];
   addFocusSession: (s: Omit<FocusSession, "id" | "date">) => void;
   missions: DailyMission[];
@@ -290,13 +323,19 @@ const AuthCtx = createContext<{
   healthLogs: HealthLog[];
   updateTodayHealth: (patch: Partial<HealthLog>) => void;
   generateCustomPlan: (categories: string[]) => void;
+  growthPlans: GrowthPlan[];
+  activePlanId: string | null;
+  addGrowthPlan: (p: Omit<GrowthPlan, "id" | "createdAt">) => void | Promise<void>;
+  updateGrowthPlan: (id: string, patch: Partial<GrowthPlan>) => void | Promise<void>;
+  deleteGrowthPlan: (id: string) => void | Promise<void>;
+  selectGrowthPlan: (id: string) => void;
 }>({
   user: null, login: () => {}, logout: () => {}, updateUser: () => {},
   tasks: [], addTask: () => {}, updateTask: () => {}, deleteTask: () => {},
   notes: [], addNote: () => {}, updateNote: () => {}, deleteNote: () => {},
   habits: [], addHabit: () => {}, updateHabit: () => {}, deleteHabit: () => {},
   goalsList: [], addGoal: () => {}, updateGoal: () => {}, deleteGoal: () => {},
-  journals: [], addJournal: () => {},
+  journals: [], addJournal: () => {}, updateJournal: () => {}, deleteJournal: () => {},
   focusSessions: [], addFocusSession: () => {},
   missions: [], toggleMission: () => {},
   rewards: [], buyReward: () => false,
@@ -306,6 +345,7 @@ const AuthCtx = createContext<{
   learningCourses: [], addLearningCourse: () => {}, toggleCourseComplete: () => {},
   careerApps: [], addCareerApp: () => {}, updateCareerAppStage: () => {}, deleteCareerApp: () => {},
   healthLogs: [], updateTodayHealth: () => {}, generateCustomPlan: () => {},
+  growthPlans: [], activePlanId: null, addGrowthPlan: () => {}, updateGrowthPlan: () => {}, deleteGrowthPlan: () => {}, selectGrowthPlan: () => {},
 });
 
 function loadArray<T>(key: string, fallback: T[]): T[] {
@@ -388,6 +428,107 @@ function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const persist = useCallback((key: string, val: unknown) => localStorage.setItem(key, JSON.stringify(val)), []);
 
+  const awardGrowthXp = useCallback((amount: number, coinsEarned = 0) => {
+    setUser(u => {
+      if (!u) return u;
+      const nextXp = (u.xp || 0) + amount;
+      const nextLevel = Math.floor(nextXp / 500) + 1;
+      const updated = { ...u, xp: nextXp, level: Math.max(u.level || 1, nextLevel) };
+      persist("gs_user", updated);
+      apiFetch("/auth/profile", { method: "PUT", body: JSON.stringify({ xp: updated.xp, level: updated.level }) }).catch(() => {});
+      return updated;
+    });
+    if (coinsEarned > 0) {
+      setCoins(c => {
+        const next = c + coinsEarned;
+        persist("gs_coins", next);
+        return next;
+      });
+    }
+  }, [persist]);
+
+  const [growthPlans, setGrowthPlans] = useState<GrowthPlan[]>(() => loadArray("gs_growth_plans", [
+    {
+      id: "gp_default",
+      title: "Become a Software Engineer",
+      category: "Coding",
+      description: "Master Full Stack development, build production architectures, and ace technical interviews.",
+      targetDate: new Date(Date.now() + 90 * 86400000).toISOString().split("T")[0],
+      progress: 35,
+      active: true,
+      createdAt: new Date().toISOString().split("T")[0]
+    }
+  ]));
+
+  const [activePlanId, setActivePlanId] = useState<string | null>(() => {
+    try {
+      return localStorage.getItem("gs_active_plan_id") || "gp_default";
+    } catch {
+      return "gp_default";
+    }
+  });
+
+  const addGrowthPlan = useCallback(async (p: Omit<GrowthPlan, "id" | "createdAt">) => {
+    const localPlan: GrowthPlan = { ...p, id: `gp_${Date.now()}`, createdAt: new Date().toISOString().split("T")[0] };
+    setGrowthPlans(prev => {
+      const next = p.active ? prev.map(x => ({ ...x, active: false })).concat(localPlan) : [...prev, localPlan];
+      persist("gs_growth_plans", next);
+      return next;
+    });
+    if (p.active) {
+      setActivePlanId(localPlan.id);
+      localStorage.setItem("gs_active_plan_id", localPlan.id);
+    }
+    const serverPlan = await apiFetch<GrowthPlan>("/plans", { method: "POST", body: JSON.stringify(p) });
+    if (serverPlan) {
+      setGrowthPlans(prev => { const next = prev.map(x => x.id === localPlan.id ? serverPlan : x); persist("gs_growth_plans", next); return next; });
+      if (p.active && serverPlan.id) {
+        setActivePlanId(serverPlan.id);
+        localStorage.setItem("gs_active_plan_id", serverPlan.id);
+      }
+    }
+  }, [persist]);
+
+  const updateGrowthPlan = useCallback(async (id: string, patch: Partial<GrowthPlan>) => {
+    setGrowthPlans(prev => {
+      let next = prev.map(p => p.id === id ? { ...p, ...patch } : p);
+      if (patch.active) {
+        next = next.map(p => p.id === id ? { ...p, active: true } : { ...p, active: false });
+        setActivePlanId(id);
+        localStorage.setItem("gs_active_plan_id", id);
+      }
+      persist("gs_growth_plans", next);
+      return next;
+    });
+    await apiFetch(`/plans/${id}`, { method: "PUT", body: JSON.stringify(patch) });
+  }, [persist]);
+
+  const deleteGrowthPlan = useCallback(async (id: string) => {
+    setGrowthPlans(prev => {
+      const next = prev.filter(p => p.id !== id);
+      persist("gs_growth_plans", next);
+      if (activePlanId === id) {
+        const fallback = next[0]?.id || null;
+        setActivePlanId(fallback);
+        if (fallback) localStorage.setItem("gs_active_plan_id", fallback);
+        else localStorage.removeItem("gs_active_plan_id");
+      }
+      return next;
+    });
+    await apiFetch(`/plans/${id}`, { method: "DELETE" });
+  }, [persist, activePlanId]);
+
+  const selectGrowthPlan = useCallback((id: string) => {
+    setGrowthPlans(prev => {
+      const next = prev.map(p => ({ ...p, active: p.id === id }));
+      persist("gs_growth_plans", next);
+      return next;
+    });
+    setActivePlanId(id);
+    localStorage.setItem("gs_active_plan_id", id);
+    apiFetch(`/plans/${id}`, { method: "PUT", body: JSON.stringify({ active: true }) });
+  }, [persist]);
+
   const toggleLearningStep = useCallback((stepIdx: number) => {
     setLearningSteps(prev => {
       const next = prev.map((s, i) => i === stepIdx ? { ...s, done: !s.done } : s);
@@ -448,60 +589,86 @@ function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const updateTodayHealth = useCallback((patch: Partial<HealthLog>) => {
     const today = new Date().toISOString().split("T")[0];
+    let isFirstToday = false;
     setHealthLogs(prev => {
       const existingIdx = prev.findIndex(l => l.date === today);
       let next: HealthLog[];
       if (existingIdx >= 0) {
         next = prev.map((l, i) => i === existingIdx ? { ...l, ...patch } : l);
       } else {
+        isFirstToday = true;
         next = [{ date: today, waterMl: 0, sleepHours: 7, workoutMins: 0, mood: "😊", ...patch }, ...prev];
       }
       persist("gs_health_logs", next);
       return next;
     });
-  }, [persist]);
+    if (isFirstToday) {
+      awardGrowthXp(25, 10);
+    }
+  }, [persist, awardGrowthXp]);
 
   const generateCustomPlan = useCallback((categories: string[]) => {
     const sel = categories.length > 0 ? categories : ["fitness", "coding", "reading", "career", "hydration", "sleep", "mental", "productivity"];
     const nowStr = new Date().toLocaleDateString("en-US", { month: "short", day: "numeric" });
     const tId = () => `plan_t_${Math.random().toString(36).substring(2, 8)}`;
-    
+    const masterPlanId = `gp_${Date.now()}`;
+
+    // 0. Create Master Growth Plan
+    const newPlan: GrowthPlan = {
+      id: masterPlanId,
+      title: `Tailored Growth Plan (${sel.slice(0, 3).map(s => s.charAt(0).toUpperCase() + s.slice(1)).join(", ")})`,
+      category: sel[0] ? sel[0].charAt(0).toUpperCase() + sel[0].slice(1) : "Master",
+      description: `Comprehensive execution roadmap focused on ${sel.join(", ")} mastery and habit optimization.`,
+      targetDate: new Date(Date.now() + 90 * 86400000).toISOString().split("T")[0],
+      progress: 0,
+      active: true,
+      createdAt: nowStr
+    };
+    setGrowthPlans(prev => {
+      const next = prev.map(p => ({ ...p, active: false })).concat(newPlan);
+      persist("gs_growth_plans", next);
+      return next;
+    });
+    setActivePlanId(masterPlanId);
+    localStorage.setItem("gs_active_plan_id", masterPlanId);
+    apiFetch("/plans", { method: "POST", body: JSON.stringify(newPlan) });
+
     // 1. Generate Tasks
     const newTasks: Task[] = [];
     if (sel.includes("fitness") || sel.includes("health")) {
-      newTasks.push({ id: tId(), title: "Complete 30-min full body workout or cardio interval", priority: "High", category: "Fitness", done: false, createdAt: nowStr, checklist: [{ id: "c1", text: "5-min dynamic warmup", done: true }, { id: "c2", text: "20-min resistance training", done: false }, { id: "c3", text: "5-min cool down stretch", done: false }] });
-      newTasks.push({ id: tId(), title: "Meal prep clean, high-protein nutrition for the next 3 days", priority: "Medium", category: "Nutrition", done: false, createdAt: nowStr });
+      newTasks.push({ id: tId(), title: "Complete 30-min full body workout or cardio interval", priority: "High", category: "Fitness", done: false, createdAt: nowStr, planId: masterPlanId, difficulty: "Medium", subtasks: [{ id: "c1", title: "5-min dynamic warmup", done: true }, { id: "c2", title: "20-min resistance training", done: false }, { id: "c3", title: "5-min cool down stretch", done: false }] });
+      newTasks.push({ id: tId(), title: "Meal prep clean, high-protein nutrition for the next 3 days", priority: "Medium", category: "Nutrition", done: false, createdAt: nowStr, planId: masterPlanId, difficulty: "Easy" });
     }
     if (sel.includes("coding") || sel.includes("career")) {
-      newTasks.push({ id: tId(), title: "Solve 2 LeetCode algorithm challenges (Arrays / Dynamic Programming)", priority: "High", category: "Coding", done: false, createdAt: nowStr, checklist: [{ id: "c1", text: "Write optimal solution without hints", done: false }, { id: "c2", text: "Analyze time and space complexity", done: false }] });
-      newTasks.push({ id: tId(), title: "Update GitHub portfolio & refine LinkedIn experience bullets", priority: "High", category: "Career", done: false, createdAt: nowStr });
+      newTasks.push({ id: tId(), title: "Solve 2 LeetCode algorithm challenges (Arrays / Dynamic Programming)", priority: "High", category: "Coding", done: false, createdAt: nowStr, planId: masterPlanId, difficulty: "Hard", subtasks: [{ id: "c1", title: "Write optimal solution without hints", done: false }, { id: "c2", title: "Analyze time and space complexity", done: false }] });
+      newTasks.push({ id: tId(), title: "Update GitHub portfolio & refine LinkedIn experience bullets", priority: "High", category: "Career", done: false, createdAt: nowStr, planId: masterPlanId, difficulty: "Medium" });
     }
     if (sel.includes("reading") || sel.includes("mental")) {
-      newTasks.push({ id: tId(), title: "Read 25 pages of non-fiction book without phone distractions", priority: "Medium", category: "Reading", done: false, createdAt: nowStr });
-      newTasks.push({ id: tId(), title: "Complete 15-minute guided breathwork and journaling reflection", priority: "High", category: "Mental", done: false, createdAt: nowStr });
+      newTasks.push({ id: tId(), title: "Read 25 pages of non-fiction book without phone distractions", priority: "Medium", category: "Reading", done: false, createdAt: nowStr, planId: masterPlanId, difficulty: "Easy" });
+      newTasks.push({ id: tId(), title: "Complete 15-minute guided breathwork and journaling reflection", priority: "High", category: "Mental", done: false, createdAt: nowStr, planId: masterPlanId, difficulty: "Easy" });
     }
     if (sel.includes("productivity") || sel.includes("sleep") || sel.includes("hydration") || sel.includes("selfcare")) {
-      newTasks.push({ id: tId(), title: "Review tomorrow's top 3 strategic priorities before finishing day", priority: "High", category: "Productivity", done: false, createdAt: nowStr });
-      newTasks.push({ id: tId(), title: "Disconnect from all digital screens 45 minutes before bedtime", priority: "Medium", category: "Wellness", done: false, createdAt: nowStr });
-      newTasks.push({ id: tId(), title: "Keep 1.5L water bottle on desk and refill at noon", priority: "High", category: "Health", done: false, createdAt: nowStr });
+      newTasks.push({ id: tId(), title: "Review tomorrow's top 3 strategic priorities before finishing day", priority: "High", category: "Productivity", done: false, createdAt: nowStr, planId: masterPlanId, difficulty: "Medium" });
+      newTasks.push({ id: tId(), title: "Disconnect from all digital screens 45 minutes before bedtime", priority: "Medium", category: "Wellness", done: false, createdAt: nowStr, planId: masterPlanId, difficulty: "Medium" });
+      newTasks.push({ id: tId(), title: "Keep 1.5L water bottle on desk and refill at noon", priority: "High", category: "Health", done: false, createdAt: nowStr, planId: masterPlanId, difficulty: "Easy" });
     }
     if (newTasks.length === 0) {
-      newTasks.push({ id: tId(), title: "Complete your first daily focus session and review habit streak", priority: "High", category: "Growth", done: false, createdAt: nowStr });
+      newTasks.push({ id: tId(), title: "Complete your first daily focus session and review habit streak", priority: "High", category: "Growth", done: false, createdAt: nowStr, planId: masterPlanId, difficulty: "Easy" });
     }
     setTasks(newTasks); persist("gs_tasks", newTasks);
 
     // 2. Generate Habits
     const newHabits: Habit[] = [];
-    if (sel.includes("fitness") || sel.includes("health")) newHabits.push({ id: 101, name: "Daily Gym / Exercise", category: "Fitness", icon: "🏋️", streak: 1, rewardXp: 50, frequency: "Daily", completedToday: false });
-    if (sel.includes("hydration") || sel.includes("health")) newHabits.push({ id: 102, name: "Drink 2.5L Water", category: "Health", icon: "💧", streak: 2, rewardXp: 30, frequency: "Daily", completedToday: false });
-    if (sel.includes("coding")) newHabits.push({ id: 103, name: "Code & Build Projects 1h", category: "Coding", icon: "💻", streak: 3, rewardXp: 60, frequency: "Daily", completedToday: false });
-    if (sel.includes("reading")) newHabits.push({ id: 104, name: "Read 20+ Minutes", category: "Reading", icon: "📚", streak: 1, rewardXp: 35, frequency: "Daily", completedToday: false });
-    if (sel.includes("sleep")) newHabits.push({ id: 105, name: "8+ Hours Quality Sleep", category: "Sleep", icon: "😴", streak: 4, rewardXp: 40, frequency: "Daily", completedToday: false });
-    if (sel.includes("mental") || sel.includes("selfcare")) newHabits.push({ id: 106, name: "Mindfulness & Meditation", category: "Mental", icon: "🧘", streak: 2, rewardXp: 35, frequency: "Daily", completedToday: false });
-    if (sel.includes("career")) newHabits.push({ id: 107, name: "Network & Career Skill Prep", category: "Career", icon: "📈", streak: 1, rewardXp: 45, frequency: "Weekdays", completedToday: false });
-    if (sel.includes("productivity")) newHabits.push({ id: 108, name: "Plan Top 3 Daily Goals", category: "Productivity", icon: "⚡", streak: 5, rewardXp: 40, frequency: "Daily", completedToday: false });
+    if (sel.includes("fitness") || sel.includes("health")) newHabits.push({ id: 101, name: "Daily Gym / Exercise", category: "Fitness", icon: "🏋️", priority: "high", freq: "Daily", streak: 1, target: "1 time", completedToday: false, planId: masterPlanId });
+    if (sel.includes("hydration") || sel.includes("health")) newHabits.push({ id: 102, name: "Drink 2.5L Water", category: "Health", icon: "💧", priority: "high", freq: "Daily", streak: 2, target: "2.5L", completedToday: false, planId: masterPlanId });
+    if (sel.includes("coding")) newHabits.push({ id: 103, name: "Code & Build Projects 1h", category: "Coding", icon: "💻", priority: "high", freq: "Daily", streak: 3, target: "1 hour", completedToday: false, planId: masterPlanId });
+    if (sel.includes("reading")) newHabits.push({ id: 104, name: "Read 20+ Minutes", category: "Reading", icon: "📚", priority: "medium", freq: "Daily", streak: 1, target: "20 mins", completedToday: false, planId: masterPlanId });
+    if (sel.includes("sleep")) newHabits.push({ id: 105, name: "8+ Hours Quality Sleep", category: "Sleep", icon: "😴", priority: "high", freq: "Daily", streak: 4, target: "8 hours", completedToday: false, planId: masterPlanId });
+    if (sel.includes("mental") || sel.includes("selfcare")) newHabits.push({ id: 106, name: "Mindfulness & Meditation", category: "Mental", icon: "🧘", priority: "medium", freq: "Daily", streak: 2, target: "15 mins", completedToday: false, planId: masterPlanId });
+    if (sel.includes("career")) newHabits.push({ id: 107, name: "Network & Career Skill Prep", category: "Career", icon: "📈", priority: "high", freq: "Weekdays", streak: 1, target: "1 hour", completedToday: false, planId: masterPlanId });
+    if (sel.includes("productivity")) newHabits.push({ id: 108, name: "Plan Top 3 Daily Goals", category: "Productivity", icon: "⚡", priority: "high", freq: "Daily", streak: 5, target: "3 tasks", completedToday: false, planId: masterPlanId });
     if (newHabits.length === 0) {
-      newHabits.push({ id: 109, name: "Daily Habit Consistency Check", category: "Growth", icon: "🚀", streak: 1, rewardXp: 40, frequency: "Daily", completedToday: false });
+      newHabits.push({ id: 109, name: "Daily Habit Consistency Check", category: "Growth", icon: "🚀", priority: "medium", freq: "Daily", streak: 1, target: "1 check", completedToday: false, planId: masterPlanId });
     }
     setHabits(newHabits); persist("gs_habits", newHabits);
 
@@ -510,10 +677,10 @@ function AuthProvider({ children }: { children: React.ReactNode }) {
     const gId = () => `plan_g_${Math.random().toString(36).substring(2, 8)}`;
     const dueThirty = new Date(Date.now() + 30 * 86400000).toISOString().split("T")[0];
     const dueSixty = new Date(Date.now() + 60 * 86400000).toISOString().split("T")[0];
-    if (sel.includes("fitness") || sel.includes("health")) newGoals.push({ id: gId(), title: "Achieve Peak Fitness: Run 5K under 25 mins & lift consistently", timeframe: "quarter", progress: 20, milestones: ["Run 3x weekly", "Daily protein target", "Sleep 8h consistently"], dueDate: dueThirty });
-    if (sel.includes("coding") || sel.includes("career")) newGoals.push({ id: gId(), title: "Build & Deploy 2 Full-Stack Portfolio Web Applications", timeframe: "quarter", progress: 35, milestones: ["System design sketch", "Frontend UI polished", "Backend API deployed"], dueDate: dueSixty });
-    if (sel.includes("reading") || sel.includes("mental")) newGoals.push({ id: gId(), title: "Read 12 transformative books on leadership, psychology & tech", timeframe: "year", progress: 15, milestones: ["Book 1 summary notes", "Daily 30m reading block", "Review quarterly lessons"], dueDate: dueSixty });
-    if (sel.includes("productivity") || sel.includes("sleep") || sel.includes("hydration")) newGoals.push({ id: gId(), title: "Maintain 30-day uninterrupted habit & hydration streak", timeframe: "month", progress: 40, milestones: ["Drink 2L daily", "Morning focus block", "No screens after 11 PM"], dueDate: dueThirty });
+    if (sel.includes("fitness") || sel.includes("health")) newGoals.push({ id: gId(), title: "Achieve Peak Fitness: Run 5K under 25 mins & lift consistently", timeframe: "quarter", progress: 20, milestones: ["Run 3x weekly", "Daily protein target", "Sleep 8h consistently"], dueDate: dueThirty, planId: masterPlanId });
+    if (sel.includes("coding") || sel.includes("career")) newGoals.push({ id: gId(), title: "Build & Deploy 2 Full-Stack Portfolio Web Applications", timeframe: "quarter", progress: 35, milestones: ["System design sketch", "Frontend UI polished", "Backend API deployed"], dueDate: dueSixty, planId: masterPlanId });
+    if (sel.includes("reading") || sel.includes("mental")) newGoals.push({ id: gId(), title: "Read 12 transformative books on leadership, psychology & tech", timeframe: "year", progress: 15, milestones: ["Book 1 summary notes", "Daily 30m reading block", "Review quarterly lessons"], dueDate: dueSixty, planId: masterPlanId });
+    if (sel.includes("productivity") || sel.includes("sleep") || sel.includes("hydration")) newGoals.push({ id: gId(), title: "Maintain 30-day uninterrupted habit & hydration streak", timeframe: "month", progress: 40, milestones: ["Drink 2L daily", "Morning focus block", "No screens after 11 PM"], dueDate: dueThirty, planId: masterPlanId });
     setGoalsList(newGoals); persist("gs_goals", newGoals);
 
     // 4. Generate Learning Roadmap & Courses
@@ -527,9 +694,9 @@ function AuthProvider({ children }: { children: React.ReactNode }) {
     setLearningSteps(newRoadmap); persist("gs_learning_roadmap", newRoadmap);
 
     const newCourses: LearningCourse[] = [
-      { id: "lc_1", title: "Mastering Full-Stack Systems & Architecture", desc: "Level up your technical skills with scalable patterns · 14 hours", category: "Coding", hours: 14, completed: false },
-      { id: "lc_2", title: "Peak Productivity & Deep Work Protocol", desc: "Eliminate distractions and double your daily output · 6 hours", category: "Productivity", hours: 6, completed: false },
-      { id: "lc_3", title: "Science of Fitness, Nutrition & Sleep Optimization", desc: "Evidence-based protocols for lasting energy and recovery · 8 hours", category: "Health", hours: 8, completed: false }
+      { id: "lc_1", title: "Mastering Full-Stack Systems & Architecture", desc: "Level up your technical skills with scalable patterns · 14 hours", category: "Coding", hours: 14, completed: false, planId: masterPlanId },
+      { id: "lc_2", title: "Peak Productivity & Deep Work Protocol", desc: "Eliminate distractions and double your daily output · 6 hours", category: "Productivity", hours: 6, completed: false, planId: masterPlanId },
+      { id: "lc_3", title: "Science of Fitness, Nutrition & Sleep Optimization", desc: "Evidence-based protocols for lasting energy and recovery · 8 hours", category: "Health", hours: 8, completed: false, planId: masterPlanId }
     ];
     setLearningCourses(newCourses); persist("gs_learning_courses", newCourses);
 
@@ -549,7 +716,8 @@ function AuthProvider({ children }: { children: React.ReactNode }) {
       wins: `Created my custom personalized plan focused on: ${sel.join(", ")}. Ready to make measurable progress across every area!`,
       challenges: "Overcoming old procrastination habits and maintaining strict daily focus.",
       gratitude: "Grateful for the tools, clarity, and determination to elevate my habits and career.",
-      lessons: "Consistency is the ultimate competitive advantage. Action cures self-doubt."
+      lessons: "Consistency is the ultimate competitive advantage. Action cures self-doubt.",
+      planId: masterPlanId
     };
     setJournals([starterJournal]); persist("gs_journals", [starterJournal]);
 
@@ -557,9 +725,12 @@ function AuthProvider({ children }: { children: React.ReactNode }) {
     const starterNote: Note = {
       id: `n_${Date.now()}`,
       title: "🌟 My Tailored Master Growth Plan",
-      content: `Welcome to your Custom Growth Plan tailored to: ${sel.join(", ").toUpperCase()}.\n\n✅ Daily Game Plan:\n• Morning: Check off habits & complete workout/hydration targets.\n• Afternoon: Focus on priority tasks & coding/learning milestones.\n• Evening: Log reflection in Journal & review sleep metrics.\n\nEverything in GrowSync is fully connected. Click '+ Add Custom Item' in any view to expand your plan anytime!`,
-      category: "Master Plan",
-      createdAt: nowStr
+      body: `Welcome to your Custom Growth Plan tailored to: ${sel.join(", ").toUpperCase()}.\n\n✅ Daily Game Plan:\n• Morning: Check off habits & complete workout/hydration targets.\n• Afternoon: Focus on priority tasks & coding/learning milestones.\n• Evening: Log reflection in Journal & review sleep metrics.\n\nEverything in GrowSync is fully connected. Click '+ Add Custom Item' in any view to expand your plan anytime!`,
+      color: "violet",
+      pinned: true,
+      createdAt: nowStr,
+      folder: "Master Plan",
+      planId: masterPlanId
     };
     setNotes([starterNote]); persist("gs_notes", [starterNote]);
   }, [persist]);
@@ -579,6 +750,17 @@ function AuthProvider({ children }: { children: React.ReactNode }) {
     apiFetch<GrowthPartner[]>("/partners").then(data => {
       if (Array.isArray(data)) { setPartners(data); persist("gs_partners", data); }
     });
+    apiFetch<GrowthPlan[]>("/plans").then(data => {
+      if (Array.isArray(data)) {
+        setGrowthPlans(data);
+        persist("gs_growth_plans", data);
+        const active = data.find(p => p.active);
+        if (active) {
+          setActivePlanId(active.id);
+          localStorage.setItem("gs_active_plan_id", active.id);
+        }
+      }
+    });
   }, [user, persist]);
 
   const login = useCallback(async (email: string, name?: string) => {
@@ -596,11 +778,13 @@ function AuthProvider({ children }: { children: React.ReactNode }) {
       localStorage.removeItem("gs_notes");
       localStorage.removeItem("gs_habits");
       localStorage.removeItem("gs_partners");
-      setTasks([]); setNotes([]); setHabits([]); setPartners([]);
+      localStorage.removeItem("gs_growth_plans");
+      setTasks([]); setNotes([]); setHabits([]); setPartners([]); setGrowthPlans([]);
       apiFetch<Task[]>("/tasks").then(data => { if (Array.isArray(data)) { setTasks(data); persist("gs_tasks", data); } });
       apiFetch<Note[]>("/notes").then(data => { if (Array.isArray(data)) { setNotes(data); persist("gs_notes", data); } });
       apiFetch<Habit[]>("/habits").then(data => { if (Array.isArray(data)) { setHabits(data); persist("gs_habits", data); } });
       apiFetch<GrowthPartner[]>("/partners").then(data => { if (Array.isArray(data)) { setPartners(data); persist("gs_partners", data); } });
+      apiFetch<GrowthPlan[]>("/plans").then(data => { if (Array.isArray(data)) { setGrowthPlans(data); persist("gs_growth_plans", data); const active = data.find(p => p.active); if (active) { setActivePlanId(active.id); localStorage.setItem("gs_active_plan_id", active.id); } } });
     } else {
       // ⚠️ Backend offline — create a local account so the app is still usable
       const existingSaved = localStorage.getItem("gs_user");
@@ -649,9 +833,21 @@ function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [persist]);
 
   const updateTask = useCallback(async (id: string, patch: Partial<Task>) => {
-    setTasks(ts => { const next = ts.map(t => t.id === id ? { ...t, ...patch } : t); persist("gs_tasks", next); return next; });
+    let earnedXp = 0;
+    setTasks(ts => {
+      const target = ts.find(t => t.id === id);
+      if (target && !target.done && patch.done === true) {
+        earnedXp = 15;
+      }
+      const next = ts.map(t => t.id === id ? { ...t, ...patch } : t);
+      persist("gs_tasks", next);
+      return next;
+    });
+    if (earnedXp > 0) {
+      awardGrowthXp(15, 5);
+    }
     await apiFetch(`/tasks/${id}`, { method: "PUT", body: JSON.stringify(patch) });
-  }, [persist]);
+  }, [persist, awardGrowthXp]);
 
   const deleteTask = useCallback(async (id: string) => {
     setTasks(ts => { const next = ts.filter(t => t.id !== id); persist("gs_tasks", next); return next; });
@@ -678,85 +874,46 @@ function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [persist]);
 
   const addPartner = useCallback(async (code: string): Promise<{ ok: boolean; error?: string; partner?: GrowthPartner }> => {
-    const serverPartner = await apiFetch<GrowthPartner>("/partners/invite", {
-      method: "POST",
-      body: JSON.stringify({ code }),
-    });
-    if (serverPartner) {
-      setPartners(ps => { const next = [...ps, serverPartner]; persist("gs_partners", next); return next; });
-      return { ok: true, partner: serverPartner };
+    const cleanCode = code.trim().toUpperCase();
+    if (!cleanCode) {
+      return { ok: false, error: "Invite code cannot be empty." };
     }
-    // Backend returned an error response — fetch the error text
-    try {
-      const errRes = await fetch(`${API_URL}/partners/invite`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...((() => { try { const u = JSON.parse(localStorage.getItem("gs_user") || ""); return u?.id ? { Authorization: `Bearer ${u.id}` } : {}; } catch { return {}; } })())
-        },
-        body: JSON.stringify({ code }),
-      });
-      const errData = await errRes.json();
-      if (errRes.status >= 400 && errRes.status < 500 && errData?.error) {
-        return { ok: false, error: errData.error };
-      }
-    } catch {
-      // Server/MongoDB is offline — fall through to create simulated partner connection locally
+    // Prevent self-connect check locally if known
+    if (user && user.inviteCode?.toUpperCase() === cleanCode) {
+      return { ok: false, error: "You cannot add yourself as a growth partner!" };
     }
 
-    // Offline / fallback simulated growth partner connection
-    const offlinePartner: GrowthPartner = {
-      id: `offline_${Date.now()}`,
-      friendUserId: `offline_u_${Date.now()}`,
-      name: `Growth Friend (${code.toUpperCase()})`,
-      avatar: null,
-      level: 7,
-      xp: 320,
-      streak: 14,
-      longestStreak: 21,
-      status: "online",
-      inviteCode: code.toUpperCase(),
-      habits: [
-        { name: "Morning Meditation", icon: "🧘", done: true, streak: 14 },
-        { name: "Daily Hydration", icon: "💧", done: true, streak: 8 },
-        { name: "Read 20 pages", icon: "📚", done: false, streak: 5 }
-      ],
-      tasks: [
-        { title: "Complete project milestone", done: true, priority: "high" },
-        { title: "30 min evening walk", done: false, priority: "medium" }
-      ],
-      weekProgress: [70, 65, 80, 85, 75, 90, 85],
-      healthScore: 84,
-      careerScore: 78,
-      productivityScore: 82,
-      focusHours: 16.5,
-      studyHours: 12,
-      codingHours: 20,
-      waterIntake: 7,
-      sleepHours: 7.5,
-      exercise: 50,
-      currentChallenge: "30-Day Consistency Sprint",
-      currentRank: "Silver I",
-      mood: "😊 Good",
-      habitCompletion: 75,
-      taskCompletion: 60,
-      completedTasks: 15,
-      pendingTasks: 3,
-      weeklyGoalsDone: 4,
-      weeklyGoalsTotal: 5,
-      monthlyGoalsDone: 7,
-      monthlyGoalsTotal: 10,
-    };
-    setPartners(ps => {
-      if (ps.some(p => p.inviteCode.toUpperCase() === code.toUpperCase())) {
-        return ps;
+    try {
+      const u = (() => { try { return JSON.parse(localStorage.getItem("gs_user") || ""); } catch { return null; } })();
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (u?.id || u?._id) headers["Authorization"] = `Bearer ${u.id || u._id}`;
+
+      const res = await fetch(`${API_URL}/partners/invite`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ code: cleanCode }),
+      });
+
+      const data = await res.json().catch(() => null);
+
+      if (res.ok && data) {
+        setPartners(ps => {
+          if (ps.some(p => p.inviteCode?.toUpperCase() === cleanCode || p.id === data.id)) {
+            return ps;
+          }
+          const next = [...ps, data];
+          persist("gs_partners", next);
+          return next;
+        });
+        return { ok: true, partner: data };
+      } else {
+        const errMsg = data?.error || (res.status === 404 ? "No user found with that invite code. Please check and try again." : "Could not connect with that invite code.");
+        return { ok: false, error: errMsg };
       }
-      const next = [...ps, offlinePartner];
-      persist("gs_partners", next);
-      return next;
-    });
-    return { ok: true, partner: offlinePartner };
-  }, [persist]);
+    } catch (err) {
+      return { ok: false, error: "Network error or server offline. Please make sure the backend server is running to connect real growth partners." };
+    }
+  }, [user, persist]);
 
   const removePartner = useCallback(async (id: string) => {
     setPartners(ps => { const next = ps.filter(p => p.id !== id); persist("gs_partners", next); return next; });
@@ -773,9 +930,21 @@ function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [persist]);
 
   const updateHabit = useCallback(async (id: number, patch: Partial<Habit>) => {
-    setHabits(hs => { const next = hs.map(h => h.id === id ? { ...h, ...patch } : h); persist("gs_habits", next); return next; });
+    let earnedXp = 0;
+    setHabits(hs => {
+      const target = hs.find(h => h.id === id);
+      if (target && !target.completedToday && patch.completedToday === true) {
+        earnedXp = 20;
+      }
+      const next = hs.map(h => h.id === id ? { ...h, ...patch } : h);
+      persist("gs_habits", next);
+      return next;
+    });
+    if (earnedXp > 0) {
+      awardGrowthXp(20, 10);
+    }
     await apiFetch(`/habits/${id}`, { method: "PUT", body: JSON.stringify(patch) });
-  }, [persist]);
+  }, [persist, awardGrowthXp]);
 
   const deleteHabit = useCallback(async (id: number) => {
     setHabits(hs => { const next = hs.filter(h => h.id !== id); persist("gs_habits", next); return next; });
@@ -792,12 +961,20 @@ function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [persist]);
 
   const updateGoal = useCallback((id: string, patch: Partial<GoalItem>) => {
+    let earnedXp = 0;
     setGoalsList(prev => {
+      const target = prev.find(g => g.id === id);
+      if (target && target.progress !== 100 && patch.progress === 100) {
+        earnedXp = 50;
+      }
       const next = prev.map(g => g.id === id ? { ...g, ...patch } : g);
       persist("gs_goals", next);
       return next;
     });
-  }, [persist]);
+    if (earnedXp > 0) {
+      awardGrowthXp(50, 25);
+    }
+  }, [persist, awardGrowthXp]);
 
   const deleteGoal = useCallback((id: string) => {
     setGoalsList(prev => {
@@ -811,6 +988,23 @@ function AuthProvider({ children }: { children: React.ReactNode }) {
     const nextJournal = { ...j, id: `j_${Date.now()}`, date: new Date().toISOString().split("T")[0] };
     setJournals(prev => {
       const next = [nextJournal, ...prev];
+      persist("gs_journals", next);
+      return next;
+    });
+    awardGrowthXp(25, 10);
+  }, [persist, awardGrowthXp]);
+
+  const updateJournal = useCallback((id: string, patch: Partial<JournalEntry>) => {
+    setJournals(prev => {
+      const next = prev.map(j => j.id === id ? { ...j, ...patch } : j);
+      persist("gs_journals", next);
+      return next;
+    });
+  }, [persist]);
+
+  const deleteJournal = useCallback((id: string) => {
+    setJournals(prev => {
+      const next = prev.filter(j => j.id !== id);
       persist("gs_journals", next);
       return next;
     });
@@ -883,7 +1077,7 @@ function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [persist]);
 
   return (
-    <AuthCtx.Provider value={{ user, login, logout, updateUser, tasks, addTask, updateTask, deleteTask, notes, addNote, updateNote, deleteNote, habits, addHabit, updateHabit, deleteHabit, goalsList, addGoal, updateGoal, deleteGoal, journals, addJournal, focusSessions, addFocusSession, missions, toggleMission, rewards, buyReward, coins, addCoins, partners, addPartner, removePartner, learningSteps, toggleLearningStep, addLearningStep, learningCourses, addLearningCourse, toggleCourseComplete, careerApps, addCareerApp, updateCareerAppStage, deleteCareerApp, healthLogs, updateTodayHealth, generateCustomPlan }}>
+    <AuthCtx.Provider value={{ user, login, logout, updateUser, tasks, addTask, updateTask, deleteTask, notes, addNote, updateNote, deleteNote, habits, addHabit, updateHabit, deleteHabit, goalsList, addGoal, updateGoal, deleteGoal, journals, addJournal, updateJournal, deleteJournal, focusSessions, addFocusSession, missions, toggleMission, rewards, buyReward, coins, addCoins, partners, addPartner, removePartner, learningSteps, toggleLearningStep, addLearningStep, learningCourses, addLearningCourse, toggleCourseComplete, careerApps, addCareerApp, updateCareerAppStage, deleteCareerApp, healthLogs, updateTodayHealth, generateCustomPlan, growthPlans, activePlanId, addGrowthPlan, updateGrowthPlan, deleteGrowthPlan, selectGrowthPlan }}>
       {children}
     </AuthCtx.Provider>
   );
@@ -1510,7 +1704,7 @@ const activityData = [
 ];
 
 function DashboardView({ onNavigate, onQuickAdd }: { onNavigate: (v: View) => void; onQuickAdd: () => void }) {
-  const { user, tasks, updateTask, habits, updateHabit, partners, coins, addCoins, generateCustomPlan, updateUser } = useAuth();
+  const { user, tasks, updateTask, habits, updateHabit, partners, coins, addCoins, generateCustomPlan, updateUser, growthPlans, activePlanId, selectGrowthPlan } = useAuth();
   
   // Local state for dashboard widgets
   const [mood, setMood] = useState("good");
@@ -1520,6 +1714,7 @@ function DashboardView({ onNavigate, onQuickAdd }: { onNavigate: (v: View) => vo
   const [activeChallenge, setActiveChallenge] = useState("Run 5km with Jordan");
   const [showPlanModal, setShowPlanModal] = useState(false);
   const [planCategories, setPlanCategories] = useState<string[]>(user?.goals || ["fitness", "coding", "productivity"]);
+  const [filterPlanOnly, setFilterPlanOnly] = useState(false);
   const togglePlanCat = (id: string) => setPlanCategories(s => s.includes(id) ? s.filter(x => x !== id) : [...s, id]);
   
   // Mini Pomodoro State inside dashboard
@@ -1542,14 +1737,20 @@ function DashboardView({ onNavigate, onQuickAdd }: { onNavigate: (v: View) => vo
 
   if (!user) return null;
 
+  const activePlan = growthPlans.find(p => p.id === activePlanId) || growthPlans[0] || null;
+
   const moodEmojis: Record<string, string> = { great: "😄", good: "😊", okay: "😐", sad: "😔", stressed: "😰", angry: "😤" };
-  const doneHabits = habits.filter(h => h.completedToday).length;
-  const habitPct = habits.length > 0 ? Math.round((doneHabits / habits.length) * 100) : 0;
   
-  // Estimate daily task completion rate and sort completed to bottom
-  const todayTasks = tasks.slice(0, 4).sort((a, b) => Number(a.done) - Number(b.done));
-  const doneTasks = todayTasks.filter(t => t.done).length;
-  const taskPct = todayTasks.length > 0 ? Math.round((doneTasks / todayTasks.length) * 100) : 0;
+  // Filter items based on active plan switcher
+  const filteredHabits = filterPlanOnly && activePlan ? habits.filter(h => h.planId === activePlan.id || !h.planId) : habits;
+  const doneHabits = filteredHabits.filter(h => h.completedToday).length;
+  const habitPct = filteredHabits.length > 0 ? Math.round((doneHabits / filteredHabits.length) * 100) : 0;
+  
+  const filteredTasks = (filterPlanOnly && activePlan ? tasks.filter(t => t.planId === activePlan.id || !t.planId) : tasks)
+    .slice(0, 6)
+    .sort((a, b) => Number(a.done) - Number(b.done));
+  const doneTasks = filteredTasks.filter(t => t.done).length;
+  const taskPct = filteredTasks.length > 0 ? Math.round((doneTasks / filteredTasks.length) * 100) : 0;
   
   // Calculate average daily progress
   const dailyOverallProgress = Math.round((habitPct + taskPct) / 2);
@@ -1560,7 +1761,37 @@ function DashboardView({ onNavigate, onQuickAdd }: { onNavigate: (v: View) => vo
     return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
   };
 
-  // XP Leaderboard calculations (including demo partners)
+  // Rule-based Data-Driven Growth Insights
+  const insights = (() => {
+    const list: { type: "win" | "alert" | "tip"; icon: string; title: string; desc: string }[] = [];
+    if (habitPct === 100 && filteredHabits.length > 0) {
+      list.push({ type: "win", icon: "🎉", title: "Flawless Habit Mastery", desc: "You completed 100% of your tracked habits today! Your consistency score is surging." });
+    } else if (habitPct > 50) {
+      list.push({ type: "win", icon: "🔥", title: "Solid Momentum", desc: `You've checked off ${doneHabits}/${filteredHabits.length} habits today. Keep pushing for completion!` });
+    }
+    if (user.streak > 3) {
+      list.push({ type: "win", icon: "⚡", title: `${user.streak}-Day Unstoppable Streak`, desc: "Your daily streak puts you in the top tier of growers. Don't break the chain!" });
+    }
+    if (doneTasks === 0 && filteredTasks.length > 0) {
+      list.push({ type: "alert", icon: "🎯", title: "Break Inertia Today", desc: `You have ${filteredTasks.length} priority tasks pending. Start a 25-min Pomodoro focus block right now.` });
+    } else if (doneTasks > 0) {
+      list.push({ type: "win", icon: "✅", title: "Task Execution On Track", desc: `Completed ${doneTasks}/${filteredTasks.length} focus tasks today. Great execution!` });
+    }
+    if (sleepHours < 6.5) {
+      list.push({ type: "alert", icon: "🌙", title: "Recovery Deficit Detected", desc: `Only ${sleepHours}h of sleep logged. Prioritize rest tonight to maintain peak neural output and mood.` });
+    } else if (sleepHours >= 7.5) {
+      list.push({ type: "tip", icon: "🧠", title: "Optimal Sleep Logged", desc: `Your ${sleepHours}h sleep duration provides ideal recovery for complex problem solving.` });
+    }
+    if (waterCups < 4) {
+      list.push({ type: "tip", icon: "💧", title: "Hydration Boost Recommended", desc: `Only ${waterCups}/8 cups logged. Drink a full glass right now to prevent afternoon fatigue.` });
+    }
+    if (list.length === 0) {
+      list.push({ type: "tip", icon: "🚀", title: "Ready for Growth", desc: "Add custom tasks and habits or start a focus session to generate personalized data insights." });
+    }
+    return list;
+  })();
+
+  // XP Leaderboard calculations
   const leaderboard = [
     { name: "You", level: user.level, xp: user.xp, avatar: user.avatar, active: true },
     ...partners.map(p => ({ name: p.name, level: p.level, xp: p.xp, avatar: p.avatar, active: false }))
@@ -1572,7 +1803,49 @@ function DashboardView({ onNavigate, onQuickAdd }: { onNavigate: (v: View) => vo
       {/* ── CENTER MAIN CONTENT COLUMN ── */}
       <div className="flex-1 overflow-y-auto px-7 py-6 space-y-6 min-w-0 bg-background">
         
-        {/* ROW 1: Greeting, Motivational Quote, Progress & Mood */}
+        {/* ROW 1: Active Growth Plan Command Banner & Switcher */}
+        {activePlan && (
+          <Card className="p-5 border-primary/40 bg-gradient-to-r from-primary/15 via-pink-500/10 to-purple-500/15 shadow-md flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4 relative overflow-hidden">
+            <div className="absolute top-0 right-0 w-64 h-full bg-gradient-to-l from-primary/10 pointer-events-none" />
+            <div className="space-y-1.5 z-10 max-w-xl">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="bg-primary text-white text-[10px] font-extrabold px-2.5 py-0.5 rounded-full uppercase tracking-wider shadow-sm flex items-center gap-1">
+                  <Zap size={11} className="fill-white" /> Active Growth OS
+                </span>
+                <span className="text-xs font-extrabold text-primary bg-primary/10 px-2.5 py-0.5 rounded-md border border-primary/20">
+                  {activePlan.category}
+                </span>
+                <span className="text-[10px] text-muted-foreground font-bold">Target: {activePlan.targetDate}</span>
+              </div>
+              <h2 className="text-lg font-extrabold font-['Plus_Jakarta_Sans'] text-foreground tracking-tight">
+                {activePlan.title}
+              </h2>
+              <p className="text-xs text-foreground/75 leading-relaxed">
+                {activePlan.description}
+              </p>
+            </div>
+            
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 z-10 w-full lg:w-auto">
+              <div className="flex items-center gap-2 bg-card/80 backdrop-blur-sm px-3 py-2 rounded-xl border border-border">
+                <span className="text-xs font-bold text-muted-foreground">Switch Plan:</span>
+                <select
+                  value={activePlanId || ""}
+                  onChange={e => selectGrowthPlan(e.target.value)}
+                  className="bg-transparent text-xs font-extrabold text-foreground outline-none cursor-pointer pr-2"
+                >
+                  {growthPlans.map(p => (
+                    <option key={p.id} value={p.id} className="bg-card text-foreground font-bold">{p.title}</option>
+                  ))}
+                </select>
+              </div>
+              <Btn onClick={() => setShowPlanModal(true)} variant="primary" className="text-xs py-2.5 shadow-sm whitespace-nowrap flex items-center justify-center gap-1.5">
+                <Settings size={14} /> Customize Master Plan
+              </Btn>
+            </div>
+          </Card>
+        )}
+
+        {/* ROW 2: Daily Progress, Inspiration, & Mood */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
           <div className="lg:col-span-2 card-neumorphic p-6 flex flex-col justify-between bg-gradient-to-br from-[#5B3765] to-[#9E6899] text-white">
             <div>
@@ -1584,16 +1857,24 @@ function DashboardView({ onNavigate, onQuickAdd }: { onNavigate: (v: View) => vo
             </div>
             <div className="flex items-center justify-between mt-6 pt-4 border-t border-white/10 text-xs">
               <span className="flex items-center gap-1.5"><Sun size={13} className="text-amber-300" /> 24°C Calm Sunny</span>
-              <span className="font-extrabold bg-white/10 px-3 py-1 rounded-full text-[10px] tracking-wide">Premium Grower</span>
+              <span className="font-extrabold bg-white/10 px-3 py-1 rounded-full text-[10px] tracking-wide">Level {user.level} Growth Warrior</span>
             </div>
           </div>
 
           <Card className="p-5 border-border shadow-sm flex flex-col justify-between">
             <div>
-              <p className="text-[10px] font-extrabold text-muted-foreground uppercase tracking-widest">Today's completion</p>
+              <div className="flex justify-between items-center">
+                <p className="text-[10px] font-extrabold text-muted-foreground uppercase tracking-widest">Today's OS Score</p>
+                <button
+                  onClick={() => setFilterPlanOnly(!filterPlanOnly)}
+                  className={`text-[9px] px-2 py-0.5 rounded-full font-bold border transition-all ${filterPlanOnly ? "bg-primary text-white border-primary" : "bg-muted text-muted-foreground border-border"}`}
+                >
+                  {filterPlanOnly ? "Plan Items Only" : "All Items"}
+                </button>
+              </div>
               <div className="flex items-baseline gap-1 mt-1">
                 <span className="text-3xl font-extrabold text-primary">{dailyOverallProgress}%</span>
-                <span className="text-xs text-muted-foreground font-medium">overall rate</span>
+                <span className="text-xs text-muted-foreground font-medium">completion rate</span>
               </div>
               <div className="h-2 rounded-full bg-muted overflow-hidden mt-3">
                 <div className="h-full bg-gradient-to-r from-primary to-accent transition-all" style={{ width: `${dailyOverallProgress}%` }} />
@@ -1607,11 +1888,38 @@ function DashboardView({ onNavigate, onQuickAdd }: { onNavigate: (v: View) => vo
           </Card>
         </div>
 
-        {/* ROW 1.5: Mood tracker with emoji */}
+        {/* ROW 2.5: Smart Growth Insights (Data-Driven Engine) */}
+        <Card className="p-5 border-border shadow-sm space-y-3.5 bg-gradient-to-br from-card to-muted/20">
+          <div className="flex items-center justify-between border-b border-border/40 pb-2.5">
+            <div className="flex items-center gap-2">
+              <span className="w-7 h-7 rounded-lg bg-primary/10 text-primary flex items-center justify-center text-base">⚡</span>
+              <div>
+                <h3 className="text-sm font-extrabold font-['Poppins']">Smart Growth Insights</h3>
+                <p className="text-[10px] text-muted-foreground font-medium">Real-time analysis of your tasks, habits, recovery, and momentum</p>
+              </div>
+            </div>
+            <span className="text-[10px] bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-extrabold px-2 py-1 rounded-md border border-emerald-500/20">
+              Live Data Engine
+            </span>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {insights.map((item, idx) => (
+              <div key={idx} className="p-3.5 rounded-xl border border-border/60 bg-card/80 flex items-start gap-3 transition-all hover:border-primary/30 shadow-xs">
+                <span className="text-xl mt-0.5">{item.icon}</span>
+                <div className="flex-1 min-w-0">
+                  <h4 className="text-xs font-extrabold text-foreground">{item.title}</h4>
+                  <p className="text-[11px] text-muted-foreground leading-snug mt-0.5">{item.desc}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </Card>
+
+        {/* ROW 3: Mood Tracker & Quick Actions */}
         <Card className="p-5 border-border shadow-sm">
           <div className="flex justify-between items-center mb-3">
             <h3 className="text-xs font-extrabold text-muted-foreground uppercase tracking-widest">How is your energy & mood today?</h3>
-            <span className="text-xs text-primary font-bold">Selected: {mood}</span>
+            <span className="text-xs text-primary font-bold capitalize">Selected: {mood}</span>
           </div>
           <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
             {[
@@ -1630,27 +1938,9 @@ function DashboardView({ onNavigate, onQuickAdd }: { onNavigate: (v: View) => vo
                 }`}
               >
                 <span className="text-lg block mb-0.5">{moodEmojis[x.m]}</span>
-                <span className="text-[10px] tracking-wide block">{x.m}</span>
+                <span className="text-[10px] tracking-wide block capitalize">{x.m}</span>
               </button>
             ))}
-          </div>
-        </Card>
-
-        {/* ROW 1.8: Custom Master Plan Generator Banner */}
-        <Card className="p-5 border-primary/30 bg-gradient-to-r from-primary/10 via-pink-500/10 to-purple-500/10 shadow-sm flex flex-col md:flex-row items-center justify-between gap-4">
-          <div className="space-y-1">
-            <div className="flex items-center gap-2">
-              <span className="bg-primary text-white text-[10px] font-extrabold px-2.5 py-0.5 rounded-full uppercase tracking-wider">All-in-One Plan Engine</span>
-              <h3 className="text-sm font-extrabold font-['Plus_Jakarta_Sans'] text-foreground">Personalized Master Growth Plan</h3>
-            </div>
-            <p className="text-xs text-foreground/60 leading-relaxed">
-              Tailor and populate every feature (<strong className="text-primary">Tasks, Habits, Goals, Learning Courses, Career Milestones & Journal Prompts</strong>) based on your custom goals.
-            </p>
-          </div>
-          <div className="flex items-center gap-2 flex-shrink-0">
-            <Btn onClick={() => setShowPlanModal(true)} variant="primary" className="text-xs py-2.5 shadow-sm">
-              <Settings size={14} /> Customize Master Plan
-            </Btn>
           </div>
         </Card>
 
@@ -1698,60 +1988,108 @@ function DashboardView({ onNavigate, onQuickAdd }: { onNavigate: (v: View) => vo
           </div>
         )}
 
-        {/* ROW 2: Daily Tasks Beautiful Checklist */}
+        {/* ROW 4: Today's Mission Command Box (Tasks with Subtask Checklists) */}
         <Card className="p-5 border-border shadow-sm space-y-4">
-          <div className="flex justify-between items-center border-b border-border/40 pb-2">
-            <h3 className="text-sm font-extrabold font-['Poppins']">Today's Focus Tasks</h3>
-            <button
-              onClick={onQuickAdd}
-              className="bg-primary/10 text-primary hover:bg-primary/15 px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1 border border-primary/10"
-            >
-              <Plus size={12} /> New +
-            </button>
+          <div className="flex justify-between items-center border-b border-border/40 pb-2.5">
+            <div className="flex items-center gap-2">
+              <h3 className="text-sm font-extrabold font-['Poppins']">Today's Focus Tasks</h3>
+              <span className="text-[10px] bg-muted px-2 py-0.5 rounded-full font-bold text-muted-foreground">
+                {doneTasks}/{filteredTasks.length} done
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <button onClick={() => onNavigate("tasks")} className="text-xs text-primary font-bold hover:underline">View Multi-View</button>
+              <button
+                onClick={onQuickAdd}
+                className="bg-primary/10 text-primary hover:bg-primary/15 px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1 border border-primary/10"
+              >
+                <Plus size={12} /> New +
+              </button>
+            </div>
           </div>
           <div className="space-y-3">
-            {todayTasks.length === 0 ? (
-              <p className="text-muted-foreground text-xs text-center py-4">No tasks found. Click "New +" to schedule some focus action!</p>
+            {filteredTasks.length === 0 ? (
+              <p className="text-muted-foreground text-xs text-center py-4">No tasks found for this view. Click "New +" to schedule some focus action!</p>
             ) : (
-              todayTasks.map(t => (
-                <div
-                  key={t.id}
-                  className={`flex items-center gap-3 p-3.5 rounded-2xl border transition-all ${
-                    t.done ? "border-border/50 opacity-60 bg-muted/20" : "border-border hover:border-primary/20 bg-card"
-                  }`}
-                >
-                  <button
-                    onClick={() => updateTask(t.id, { done: !t.done })}
-                    className={`w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0 transition-all ${
-                      t.done ? "bg-gradient-to-br from-primary to-accent border-transparent" : "border-foreground/20 hover:border-primary"
+              filteredTasks.map(t => {
+                const subDone = t.subtasks?.filter(s => s.done).length || 0;
+                const subTotal = t.subtasks?.length || 0;
+                return (
+                  <div
+                    key={t.id}
+                    className={`p-3.5 rounded-2xl border transition-all space-y-2.5 ${
+                      t.done ? "border-border/50 opacity-60 bg-muted/20" : "border-border hover:border-primary/20 bg-card"
                     }`}
                   >
-                    {t.done && <Check size={10} className="text-white" />}
-                  </button>
-                  <div className="flex-1 min-w-0">
-                    <p className={`text-xs font-bold truncate ${t.done ? "line-through text-foreground/30 font-normal" : "text-foreground"}`}>{t.title}</p>
-                    <div className="flex items-center gap-2 mt-1">
-                      <span className="text-[9px] text-muted-foreground flex items-center gap-0.5"><Clock size={9} /> {t.dueDate}</span>
-                      <span className="text-[9px] text-muted-foreground bg-muted px-1.5 py-0.5 rounded-md font-medium">{t.category}</span>
+                    <div className="flex items-start gap-3">
+                      <button
+                        onClick={() => updateTask(t.id, { done: !t.done })}
+                        className={`w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0 transition-all mt-0.5 ${
+                          t.done ? "bg-gradient-to-br from-primary to-accent border-transparent" : "border-foreground/20 hover:border-primary"
+                        }`}
+                      >
+                        {t.done && <Check size={10} className="text-white" />}
+                      </button>
+                      <div className="flex-1 min-w-0">
+                        <p className={`text-xs font-bold truncate ${t.done ? "line-through text-foreground/30 font-normal" : "text-foreground"}`}>{t.title}</p>
+                        <div className="flex items-center gap-2.5 mt-1.5 flex-wrap">
+                          <span className="text-[9px] text-muted-foreground flex items-center gap-0.5"><Clock size={9} /> {t.dueDate}</span>
+                          <span className="text-[9px] text-muted-foreground bg-muted px-1.5 py-0.5 rounded-md font-medium">{t.category}</span>
+                          {t.difficulty && (
+                            <span className={`text-[9px] px-1.5 py-0.5 rounded-md font-bold ${
+                              t.difficulty === "Hard" ? "bg-red-500/10 text-red-500" : t.difficulty === "Medium" ? "bg-amber-500/10 text-amber-500" : "bg-emerald-500/10 text-emerald-500"
+                            }`}>
+                              {t.difficulty}
+                            </span>
+                          )}
+                          {subTotal > 0 && (
+                            <span className="text-[9px] text-primary font-bold bg-primary/10 px-1.5 py-0.5 rounded-md">
+                              Subtasks {subDone}/{subTotal}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                      <span className={`text-[9px] px-2 py-0.5 rounded-full border font-bold uppercase ${priorityColor[t.priority] || ""}`}>
+                        {t.priority}
+                      </span>
                     </div>
+
+                    {/* Interactive Subtasks inside Command Card */}
+                    {subTotal > 0 && !t.done && (
+                      <div className="pl-8 pt-1 border-t border-border/30 space-y-1.5">
+                        {t.subtasks?.map(sub => (
+                          <div key={sub.id} className="flex items-center gap-2">
+                            <button
+                              onClick={() => {
+                                const nextSubs = t.subtasks?.map(s => s.id === sub.id ? { ...s, done: !s.done } : s);
+                                updateTask(t.id, { subtasks: nextSubs });
+                              }}
+                              className={`w-3.5 h-3.5 rounded border flex items-center justify-center transition-all ${
+                                sub.done ? "bg-primary border-primary text-white" : "border-foreground/30"
+                              }`}
+                            >
+                              {sub.done && <Check size={8} />}
+                            </button>
+                            <span className={`text-[11px] ${sub.done ? "line-through text-muted-foreground" : "text-foreground/85"}`}>{sub.title}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
-                  <span className={`text-[9px] px-2 py-0.5 rounded-full border font-bold uppercase ${priorityColor[t.priority] || ""}`}>
-                    {t.priority}
-                  </span>
-                </div>
-              ))
+                );
+              })
             )}
           </div>
         </Card>
 
-        {/* ROW 3: Habit Tracker Status Circles */}
+        {/* ROW 5: Habit Tracker Status Circles */}
         <Card className="p-5 border-border shadow-sm space-y-3">
           <div className="flex justify-between items-center">
             <h3 className="text-sm font-extrabold font-['Poppins']">Active Habit Trackers</h3>
-            <button onClick={() => onNavigate("habits")} className="text-xs text-primary font-bold hover:underline">View All Habits</button>
+            <button onClick={() => onNavigate("habits")} className="text-xs text-primary font-bold hover:underline">View All Habits ({habits.length})</button>
           </div>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            {habits.slice(0, 4).map(h => (
+            {filteredHabits.slice(0, 4).map(h => (
               <div key={h.id} className={`p-4 rounded-2xl border flex flex-col justify-between min-h-[110px] ${h.completedToday ? "border-primary/20 bg-primary/5" : "border-border bg-card"}`}>
                 <div className="flex items-center justify-between">
                   <span className="text-2xl">{h.icon}</span>
@@ -1771,7 +2109,7 @@ function DashboardView({ onNavigate, onQuickAdd }: { onNavigate: (v: View) => vo
           </div>
         </Card>
 
-        {/* ROW 4: Focus Timer Widget */}
+        {/* ROW 6: Focus Timer Widget & Study Sound Room */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
           <Card className="p-5 border-border shadow-sm flex flex-col justify-between">
             <div className="flex justify-between items-center mb-3">
@@ -1810,7 +2148,6 @@ function DashboardView({ onNavigate, onQuickAdd }: { onNavigate: (v: View) => vo
                   </select>
                 </div>
                 
-                {/* Spotify shortcut mock */}
                 <a
                   href="https://open.spotify.com"
                   target="_blank"
@@ -1830,7 +2167,7 @@ function DashboardView({ onNavigate, onQuickAdd }: { onNavigate: (v: View) => vo
           </Card>
         </div>
 
-        {/* ROW 5: Weekly Analytics XP & Habit Performance Charts */}
+        {/* ROW 7: Weekly Analytics Chart */}
         <Card className="p-5 border-border shadow-sm">
           <h3 className="text-xs font-extrabold text-foreground/40 uppercase tracking-widest mb-4">Weekly Growth Analytics</h3>
           <ResponsiveContainer width="100%" height={180}>
@@ -1986,15 +2323,27 @@ function DashboardView({ onNavigate, onQuickAdd }: { onNavigate: (v: View) => vo
    MY TASKS VIEW
 ══════════════════════════════════════════ */
 function TasksView() {
-  const { tasks, addTask, updateTask, deleteTask, notes, addNote, updateNote, deleteNote } = useAuth();
+  const { tasks, addTask, updateTask, deleteTask, notes, addNote, updateNote, deleteNote, growthPlans, activePlanId } = useAuth();
   const [subTab, setSubTab] = useState<"tasks" | "notes">("tasks");
-  const [filter, setFilter] = useState<"all" | "pending">("all");
+  const [viewMode, setViewMode] = useState<"list" | "kanban" | "calendar">("list");
+  const [filter, setFilter] = useState<"all" | "pending" | "high">("all");
+  const [searchQuery, setSearchQuery] = useState("");
   const [showTaskForm, setShowTaskForm] = useState(false);
   const [showNoteForm, setShowNoteForm] = useState(false);
   const [editTaskId, setEditTaskId] = useState<string | null>(null);
+  const [newSubtaskTitle, setNewSubtaskTitle] = useState<{ [taskId: string]: string }>({});
   
   // Task form state
-  const [taskForm, setTaskForm] = useState({ title: "", note: "", category: "Personal", priority: "medium" as Task["priority"], dueDate: new Date().toISOString().split("T")[0] });
+  const [taskForm, setTaskForm] = useState({
+    title: "",
+    note: "",
+    category: "Personal",
+    priority: "medium" as Task["priority"],
+    dueDate: new Date().toISOString().split("T")[0],
+    difficulty: "Medium" as "Easy" | "Medium" | "Hard",
+    estimatedDuration: 30,
+    planId: activePlanId || ""
+  });
   
   // Note form state
   const [newNoteTitle, setNewNoteTitle] = useState("");
@@ -2002,13 +2351,22 @@ function TasksView() {
   const [newNoteColor, setNewNoteColor] = useState("violet");
   const [editNoteId, setEditNoteId] = useState<string | null>(null);
 
-  // Filtered lists
+  const activePlan = growthPlans.find(p => p.id === activePlanId) || null;
+
+  // Filtered tasks
   const filteredTasks = tasks.filter(t => {
+    if (searchQuery && !t.title.toLowerCase().includes(searchQuery.toLowerCase()) && !t.note?.toLowerCase().includes(searchQuery.toLowerCase())) {
+      return false;
+    }
     if (filter === "pending") return !t.done;
+    if (filter === "high") return t.priority === "high" && !t.done;
     return true;
   }).sort((a, b) => (a.done ? 1 : 0) - (b.done ? 1 : 0));
 
   const filteredNotes = notes.filter(n => {
+    if (searchQuery && !n.title?.toLowerCase().includes(searchQuery.toLowerCase()) && !n.body?.toLowerCase().includes(searchQuery.toLowerCase())) {
+      return false;
+    }
     if (filter === "pending") return !n.pinned;
     return true;
   }).sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0));
@@ -2019,15 +2377,27 @@ function TasksView() {
       updateTask(editTaskId, taskForm);
       setEditTaskId(null);
     } else {
-      addTask(taskForm);
+      addTask({
+        ...taskForm,
+        subtasks: []
+      });
     }
-    setTaskForm({ title: "", note: "", category: "Personal", priority: "medium", dueDate: new Date().toISOString().split("T")[0] });
+    setTaskForm({ title: "", note: "", category: "Personal", priority: "medium", dueDate: new Date().toISOString().split("T")[0], difficulty: "Medium", estimatedDuration: 30, planId: activePlanId || "" });
     setShowTaskForm(false);
   };
 
   const startEditTask = (t: Task) => {
     setEditTaskId(t.id);
-    setTaskForm({ title: t.title, note: t.note, category: t.category, priority: t.priority, dueDate: t.dueDate });
+    setTaskForm({
+      title: t.title,
+      note: t.note || "",
+      category: t.category,
+      priority: t.priority,
+      dueDate: t.dueDate || new Date().toISOString().split("T")[0],
+      difficulty: t.difficulty || "Medium",
+      estimatedDuration: t.estimatedDuration || 30,
+      planId: t.planId || activePlanId || ""
+    });
     setShowTaskForm(true);
   };
 
@@ -2053,49 +2423,128 @@ function TasksView() {
     setShowNoteForm(true);
   };
 
+  const quickAddTemplate = (title: string, category: string, priority: Task["priority"], duration: number) => {
+    addTask({
+      title,
+      note: `Auto-generated from ${title} template`,
+      category,
+      priority,
+      dueDate: new Date().toISOString().split("T")[0],
+      difficulty: duration >= 90 ? "Hard" : duration >= 45 ? "Medium" : "Easy",
+      estimatedDuration: duration,
+      subtasks: [
+        { id: `s_${Date.now()}_1`, title: "Setup and preparation", done: false },
+        { id: `s_${Date.now()}_2`, title: "Execute core focus block", done: false },
+        { id: `s_${Date.now()}_3`, title: "Review output & log notes", done: false }
+      ],
+      planId: activePlanId || ""
+    });
+  };
+
+  const handleAddSubtask = (taskId: string, currentSubtasks?: { id: string; title: string; done: boolean }[]) => {
+    const title = newSubtaskTitle[taskId]?.trim();
+    if (!title) return;
+    const nextSubs = [...(currentSubtasks || []), { id: `sub_${Date.now()}`, title, done: false }];
+    updateTask(taskId, { subtasks: nextSubs });
+    setNewSubtaskTitle(prev => ({ ...prev, [taskId]: "" }));
+  };
+
   const cats = ["Personal", "Career", "Health", "Learning", "Finance", "Other"];
+
+  // Kanban buckets
+  const kanbanToStart = filteredTasks.filter(t => !t.done && (!t.tags?.includes("in-progress") && t.priority !== "high"));
+  const kanbanInProgress = filteredTasks.filter(t => !t.done && (t.tags?.includes("in-progress") || t.priority === "high"));
+  const kanbanDone = filteredTasks.filter(t => t.done);
+
+  // Group by date for Calendar/Timeline View
+  const dateGroups = useMemo(() => {
+    const map: Record<string, Task[]> = {};
+    filteredTasks.forEach(t => {
+      const d = t.dueDate || "No Due Date";
+      if (!map[d]) map[d] = [];
+      map[d].push(t);
+    });
+    return Object.entries(map).sort((a, b) => a[0].localeCompare(b[0]));
+  }, [filteredTasks]);
 
   return (
     <div className="p-7 space-y-6 text-foreground font-['Plus_Jakarta_Sans']">
       
-      {/* Subheader and Tab Selectors from Mockup */}
-      <div className="flex justify-between items-center border-b border-border pb-3 flex-wrap gap-3">
+      {/* Subheader and Tab Selectors */}
+      <div className="flex justify-between items-center border-b border-border pb-4 flex-wrap gap-4">
         <div>
-          <h2 className="text-lg font-extrabold">Notes / tasks</h2>
-          <p className="text-foreground/40 text-xs mt-0.5">Organize your thoughts and tasks cleanly</p>
+          <div className="flex items-center gap-2">
+            <h2 className="text-xl font-extrabold tracking-tight">Command Tasks & Notes</h2>
+            {activePlan && (
+              <span className="text-[10px] font-extrabold bg-primary/10 text-primary border border-primary/20 px-2.5 py-0.5 rounded-full">
+                Plan: {activePlan.title}
+              </span>
+            )}
+          </div>
+          <p className="text-foreground/50 text-xs mt-0.5">Multi-view task management with subtask checklists and instant templates</p>
         </div>
         
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 flex-wrap">
           {/* Notes / Tasks Tab buttons */}
           <div className="flex bg-muted rounded-xl p-1 gap-1 border border-border">
             <button
               onClick={() => { setSubTab("notes"); setFilter("all"); }}
               className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${
                 subTab === "notes"
-                  ? "bg-[#5c7c64] text-white shadow-sm"
+                  ? "bg-primary text-white shadow-sm"
                   : "text-foreground/50 hover:text-foreground"
               }`}
             >
-              Notes
+              📝 Notes ({notes.length})
             </button>
             <button
               onClick={() => { setSubTab("tasks"); setFilter("all"); }}
               className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${
                 subTab === "tasks"
-                  ? "bg-[#5c7c64] text-white shadow-sm"
+                  ? "bg-primary text-white shadow-sm"
                   : "text-foreground/50 hover:text-foreground"
               }`}
             >
-              Tasks
+              ✅ Tasks ({tasks.length})
             </button>
           </div>
+
+          {/* View Switcher Tabs when on Tasks */}
+          {subTab === "tasks" && (
+            <div className="flex bg-muted rounded-xl p-1 gap-1 border border-border">
+              <button
+                onClick={() => setViewMode("list")}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1 ${
+                  viewMode === "list" ? "bg-card text-primary shadow-xs font-extrabold" : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                📋 List
+              </button>
+              <button
+                onClick={() => setViewMode("kanban")}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1 ${
+                  viewMode === "kanban" ? "bg-card text-primary shadow-xs font-extrabold" : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                🧱 Kanban
+              </button>
+              <button
+                onClick={() => setViewMode("calendar")}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1 ${
+                  viewMode === "calendar" ? "bg-card text-primary shadow-xs font-extrabold" : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                📅 Timeline
+              </button>
+            </div>
+          )}
 
           <button
             onClick={() => {
               if (subTab === "tasks") {
                 setShowTaskForm(true);
                 setEditTaskId(null);
-                setTaskForm({ title: "", note: "", category: "Personal", priority: "medium", dueDate: new Date().toISOString().split("T")[0] });
+                setTaskForm({ title: "", note: "", category: "Personal", priority: "medium", dueDate: new Date().toISOString().split("T")[0], difficulty: "Medium", estimatedDuration: 30, planId: activePlanId || "" });
               } else {
                 setShowNoteForm(true);
                 setEditNoteId(null);
@@ -2104,131 +2553,383 @@ function TasksView() {
                 setNewNoteColor("violet");
               }
             }}
-            className="bg-[#5c7c64] hover:bg-[#4a6451] text-white px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 shadow-sm"
+            className="bg-primary hover:bg-primary/90 text-white px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 shadow-sm"
           >
             <Plus size={14} /> New +
           </button>
         </div>
       </div>
 
-      {/* Sub-filters: All / Pendings */}
-      <div className="flex gap-2">
-        {([["all", "All"], ["pending", "Pendings"]] as [typeof filter, string][]).map(([id, label]) => (
-          <button
-            key={id}
-            onClick={() => setFilter(id)}
-            className={`px-4 py-1.5 rounded-xl text-xs font-bold border transition-all ${
-              filter === id
-                ? "bg-[#5c7c64]/15 text-[#5c7c64] border-[#5c7c64]/30"
-                : "bg-muted text-foreground/50 border-border hover:text-foreground/75"
-            }`}
-          >
-            {label} {subTab === "tasks" 
-              ? (id === "all" ? `(${tasks.length})` : `(${tasks.filter(t => !t.done).length})`)
-              : (id === "all" ? `(${notes.length})` : `(${notes.filter(n => !n.pinned).length})`)
-            }
-          </button>
-        ))}
+      {/* Quick-Add Task Templates Bar */}
+      {subTab === "tasks" && (
+        <Card className="p-3.5 border-border shadow-xs bg-muted/30 flex items-center justify-between flex-wrap gap-2">
+          <span className="text-[11px] font-extrabold text-muted-foreground flex items-center gap-1 uppercase tracking-wider">
+            <Zap size={13} className="text-amber-500 fill-amber-500" /> Quick-Add Templates:
+          </span>
+          <div className="flex items-center gap-2 flex-wrap">
+            {[
+              { label: "⚡ Code for 2 hours", cat: "Learning", prio: "high" as const, dur: 120 },
+              { label: "🏋️ Workout 45 mins", cat: "Health", prio: "medium" as const, dur: 45 },
+              { label: "🏗️ System Design Study", cat: "Career", prio: "high" as const, dur: 60 },
+              { label: "🎯 Review Weekly Goals", cat: "Personal", prio: "low" as const, dur: 30 },
+            ].map((tmpl, idx) => (
+              <button
+                key={idx}
+                onClick={() => quickAddTemplate(tmpl.label.replace(/^[^\s]+\s/, ""), tmpl.cat, tmpl.prio, tmpl.dur)}
+                className="px-3 py-1.5 bg-card hover:bg-primary/10 hover:border-primary/40 border border-border rounded-xl text-xs font-bold transition-all shadow-xs text-foreground"
+              >
+                + {tmpl.label}
+              </button>
+            ))}
+          </div>
+        </Card>
+      )}
+
+      {/* Sub-filters and Search Bar */}
+      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+        <div className="flex gap-2 flex-wrap">
+          {([
+            ["all", "All Items"],
+            ["pending", "Pending Only"],
+            ...(subTab === "tasks" ? [["high", "🔥 High Priority Only"]] : [])
+          ] as [typeof filter, string][]).map(([id, label]) => (
+            <button
+              key={id}
+              onClick={() => setFilter(id)}
+              className={`px-4 py-1.5 rounded-xl text-xs font-bold border transition-all ${
+                filter === id
+                  ? "bg-primary/15 text-primary border-primary/30 font-extrabold"
+                  : "bg-muted text-foreground/60 border-border hover:text-foreground"
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        <div className="relative w-full sm:w-64">
+          <input
+            type="text"
+            placeholder={`Search ${subTab}...`}
+            value={searchQuery}
+            onChange={e => setSearchQuery(e.target.value)}
+            className="w-full bg-input border border-border rounded-xl pl-8 pr-3 py-1.5 text-xs text-foreground outline-none focus:border-primary"
+          />
+          <span className="absolute left-2.5 top-2.5 text-muted-foreground text-xs">🔍</span>
+          {searchQuery && (
+            <button onClick={() => setSearchQuery("")} className="absolute right-2.5 top-2 text-muted-foreground hover:text-foreground text-xs font-bold">✕</button>
+          )}
+        </div>
       </div>
 
       {/* Forms Section */}
       {showTaskForm && subTab === "tasks" && (
-        <Card className="p-5 border-[#5c7c64]/20 bg-card shadow-sm">
-          <h3 className="text-sm font-extrabold mb-4">{editTaskId ? "Edit Task" : "Create New Task"}</h3>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+        <Card className="p-5 border-primary/30 bg-card shadow-md animate-fadeIn">
+          <h3 className="text-sm font-extrabold mb-4 flex items-center gap-2 text-primary">
+            <Target size={16} /> {editTaskId ? "Edit Task Details" : "Create New Focus Task"}
+          </h3>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
             <div className="md:col-span-2">
-              <Input label="Task Title" placeholder="What needs to be done?" value={taskForm.title} onChange={e => setTaskForm(f => ({ ...f, title: e.target.value }))} />
-            </div>
-            <div className="md:col-span-2">
-              <Textarea label="Notes (optional)" placeholder="Add more context…" value={taskForm.note} onChange={e => setTaskForm(f => ({ ...f, note: e.target.value }))} rows={2} />
+              <Input label="Task Title" placeholder="What specific goal needs to be accomplished?" value={taskForm.title} onChange={e => setTaskForm(f => ({ ...f, title: e.target.value }))} />
             </div>
             <div>
-              <label className="block text-foreground/50 text-xs mb-1.5 font-bold">Category</label>
-              <select value={taskForm.category} onChange={e => setTaskForm(f => ({ ...f, category: e.target.value }))} className="w-full bg-input border border-border rounded-xl px-3 py-2.5 text-foreground text-sm outline-none focus:border-[#5c7c64]">
+              <label className="block text-foreground/60 text-xs mb-1.5 font-bold">Difficulty</label>
+              <select value={taskForm.difficulty} onChange={e => setTaskForm(f => ({ ...f, difficulty: e.target.value as any }))} className="w-full bg-input border border-border rounded-xl px-3 py-2.5 text-foreground text-sm outline-none focus:border-primary">
+                <option value="Easy">Easy (Quick win)</option>
+                <option value="Medium">Medium (Standard)</option>
+                <option value="Hard">Hard (Deep Focus)</option>
+              </select>
+            </div>
+            <div className="md:col-span-2">
+              <Textarea label="Notes & Context (optional)" placeholder="Add reference links or steps…" value={taskForm.note} onChange={e => setTaskForm(f => ({ ...f, note: e.target.value }))} rows={2} />
+            </div>
+            <div>
+              <label className="block text-foreground/60 text-xs mb-1.5 font-bold">Estimated Duration (mins)</label>
+              <input type="number" min="5" step="5" value={taskForm.estimatedDuration} onChange={e => setTaskForm(f => ({ ...f, estimatedDuration: Number(e.target.value) }))} className="w-full bg-input border border-border rounded-xl px-3 py-2.5 text-foreground text-sm outline-none focus:border-primary" />
+            </div>
+            <div>
+              <label className="block text-foreground/60 text-xs mb-1.5 font-bold">Category</label>
+              <select value={taskForm.category} onChange={e => setTaskForm(f => ({ ...f, category: e.target.value }))} className="w-full bg-input border border-border rounded-xl px-3 py-2.5 text-foreground text-sm outline-none focus:border-primary">
                 {cats.map(c => <option key={c} value={c}>{c}</option>)}
               </select>
             </div>
             <div>
-              <label className="block text-foreground/50 text-xs mb-1.5 font-bold">Priority</label>
-              <select value={taskForm.priority} onChange={e => setTaskForm(f => ({ ...f, priority: e.target.value as Task["priority"] }))} className="w-full bg-input border border-border rounded-xl px-3 py-2.5 text-foreground text-sm outline-none focus:border-[#5c7c64]">
-                <option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option>
+              <label className="block text-foreground/60 text-xs mb-1.5 font-bold">Priority</label>
+              <select value={taskForm.priority} onChange={e => setTaskForm(f => ({ ...f, priority: e.target.value as Task["priority"] }))} className="w-full bg-input border border-border rounded-xl px-3 py-2.5 text-foreground text-sm outline-none focus:border-primary">
+                <option value="high">High 🔥</option><option value="medium">Medium ⚡</option><option value="low">Low ☕</option>
               </select>
             </div>
             <div>
-              <label className="block text-foreground/50 text-xs mb-1.5 font-bold">Due Date</label>
-              <input type="date" value={taskForm.dueDate} onChange={e => setTaskForm(f => ({ ...f, dueDate: e.target.value }))} className="w-full bg-input border border-border rounded-xl px-3 py-2.5 text-foreground text-sm outline-none focus:border-[#5c7c64]" />
+              <label className="block text-foreground/60 text-xs mb-1.5 font-bold">Due Date</label>
+              <input type="date" value={taskForm.dueDate} onChange={e => setTaskForm(f => ({ ...f, dueDate: e.target.value }))} className="w-full bg-input border border-border rounded-xl px-3 py-2.5 text-foreground text-sm outline-none focus:border-primary" />
             </div>
           </div>
-          <div className="flex gap-3">
-            <Btn onClick={submitTask}><Save size={14} />{editTaskId ? "Update" : "Create"} Task</Btn>
+          <div className="flex gap-3 pt-2 border-t border-border/40">
+            <Btn onClick={submitTask} variant="primary"><Save size={14} /> {editTaskId ? "Update" : "Create"} Task</Btn>
             <Btn variant="ghost" onClick={() => { setShowTaskForm(false); setEditTaskId(null); }}>Cancel</Btn>
           </div>
         </Card>
       )}
 
       {showNoteForm && subTab === "notes" && (
-        <Card className="p-5 border-[#5c7c64]/20 bg-card shadow-sm">
-          <h3 className="text-sm font-extrabold mb-4">{editNoteId ? "Edit Note" : "Create New Note"}</h3>
+        <Card className="p-5 border-primary/30 bg-card shadow-md animate-fadeIn">
+          <h3 className="text-sm font-extrabold mb-4 text-primary">{editNoteId ? "Edit Note" : "Create New Note"}</h3>
           <div className="space-y-4 mb-4">
             <Input placeholder="Note title…" value={newNoteTitle} onChange={e => setNewNoteTitle(e.target.value)} />
             <Textarea placeholder="Write your note…" value={newNoteBody} onChange={e => setNewNoteBody(e.target.value)} rows={3} />
             <div className="flex items-center gap-2">
-              <span className="text-foreground/40 text-xs font-bold">Color:</span>
+              <span className="text-foreground/60 text-xs font-bold">Color:</span>
               {["violet", "pink", "emerald", "amber", "cyan"].map(c => (
-                <button key={c} onClick={() => setNewNoteColor(c)} className={`w-6 h-6 rounded-full ${noteDotColors[c]} ${newNoteColor === c ? "ring-2 ring-offset-2 ring-[#5c7c64] dark:ring-[#7ba184] ring-offset-background" : ""}`} />
+                <button key={c} onClick={() => setNewNoteColor(c)} className={`w-6 h-6 rounded-full ${noteDotColors[c]} ${newNoteColor === c ? "ring-2 ring-offset-2 ring-primary ring-offset-background" : ""}`} />
               ))}
             </div>
           </div>
           <div className="flex gap-3">
-            <Btn onClick={saveNote}><Save size={14} />{editNoteId ? "Update" : "Save"} Note</Btn>
+            <Btn onClick={saveNote} variant="primary"><Save size={14} /> {editNoteId ? "Update" : "Save"} Note</Btn>
             <Btn variant="ghost" onClick={() => { setShowNoteForm(false); setEditNoteId(null); }}>Cancel</Btn>
           </div>
         </Card>
       )}
 
-      {/* Main List display */}
-      <div className="space-y-3">
+      {/* Main Display Section */}
+      <div className="space-y-4">
         
-        {/* Render Tasks List */}
-        {subTab === "tasks" && (
+        {/* 1. LIST VIEW FOR TASKS */}
+        {subTab === "tasks" && viewMode === "list" && (
           <>
             {filteredTasks.length === 0 && (
-              <Card className="p-8 text-center text-foreground/35"><p>No tasks found. Click "New +" to create your first task!</p></Card>
+              <Card className="p-8 text-center text-muted-foreground"><p>No tasks found. Try selecting another filter or click "New +" to create your first task!</p></Card>
             )}
-            {filteredTasks.map(t => (
-              <Card key={t.id} className={`p-4 transition-all hover:border-[#5c7c64]/20 ${t.done ? "opacity-60 bg-muted/10 border-border/40" : "border-border bg-card shadow-sm"}`}>
-                <div className="flex items-start gap-3">
-                  <button onClick={() => updateTask(t.id, { done: !t.done })} className={`mt-0.5 w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0 transition-all ${t.done ? "bg-gradient-to-br from-[#5c7c64] to-[#8b2626] border-transparent" : "border-foreground/20 hover:border-[#5c7c64]"}`}>
-                    {t.done && <Check size={10} className="text-white" />}
-                  </button>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="min-w-0">
-                        <p className={`font-semibold text-sm ${t.done ? "line-through text-foreground/35 font-normal" : "text-foreground"}`}>{t.title}</p>
-                        {t.note && <p className="text-foreground/45 text-xs mt-1 leading-relaxed">{t.note}</p>}
-                        <div className="flex items-center gap-2 mt-2.5 flex-wrap">
-                          <span className={`text-[9px] px-2 py-0.5 rounded-full border font-bold uppercase ${priorityColor[t.priority] || ""}`}>{t.priority}</span>
-                          <span className="text-[9px] bg-muted text-foreground/40 px-2 py-0.5 rounded-full font-semibold">{t.category}</span>
-                          <span className="text-[9px] text-foreground/35 flex items-center gap-0.5"><Clock size={9} />{t.dueDate}</span>
+            {filteredTasks.map(t => {
+              const subDone = t.subtasks?.filter(s => s.done).length || 0;
+              const subTotal = t.subtasks?.length || 0;
+              return (
+                <Card key={t.id} className={`p-4 transition-all hover:border-primary/30 ${t.done ? "opacity-60 bg-muted/10 border-border/40" : "border-border bg-card shadow-sm"}`}>
+                  <div className="flex items-start gap-3">
+                    <button onClick={() => updateTask(t.id, { done: !t.done })} className={`mt-0.5 w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0 transition-all ${t.done ? "bg-gradient-to-br from-primary to-accent border-transparent" : "border-foreground/20 hover:border-primary"}`}>
+                      {t.done && <Check size={10} className="text-white" />}
+                    </button>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <p className={`font-bold text-sm ${t.done ? "line-through text-foreground/40 font-normal" : "text-foreground"}`}>{t.title}</p>
+                          {t.note && <p className="text-foreground/60 text-xs mt-1 leading-relaxed">{t.note}</p>}
+                          
+                          <div className="flex items-center gap-2 mt-2.5 flex-wrap">
+                            <span className={`text-[9px] px-2 py-0.5 rounded-full border font-bold uppercase ${priorityColor[t.priority] || ""}`}>{t.priority}</span>
+                            <span className="text-[9px] bg-muted text-foreground/60 px-2 py-0.5 rounded-full font-semibold">{t.category}</span>
+                            <span className="text-[9px] text-muted-foreground flex items-center gap-0.5"><Clock size={9} />{t.dueDate}</span>
+                            {t.difficulty && (
+                              <span className={`text-[9px] px-1.5 py-0.5 rounded-md font-bold ${
+                                t.difficulty === "Hard" ? "bg-red-500/10 text-red-500" : t.difficulty === "Medium" ? "bg-amber-500/10 text-amber-500" : "bg-emerald-500/10 text-emerald-500"
+                              }`}>
+                                {t.difficulty} ({t.estimatedDuration || 30}m)
+                              </span>
+                            )}
+                            {subTotal > 0 && (
+                              <span className="text-[9px] text-primary font-bold bg-primary/10 px-2 py-0.5 rounded-full">
+                                Subtasks: {subDone}/{subTotal}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                        <div className="flex gap-1.5 flex-shrink-0">
+                          <button onClick={() => startEditTask(t)} className="w-7 h-7 rounded-lg bg-muted flex items-center justify-center text-foreground/40 hover:text-primary hover:bg-primary/10 transition-all"><Pencil size={12} /></button>
+                          <button onClick={() => deleteTask(t.id)} className="w-7 h-7 rounded-lg bg-muted flex items-center justify-center text-foreground/40 hover:text-red-500 hover:bg-red-500/10 transition-all"><Trash2 size={12} /></button>
                         </div>
                       </div>
-                      <div className="flex gap-1.5 flex-shrink-0">
-                        <button onClick={() => startEditTask(t)} className="w-7 h-7 rounded-lg bg-muted flex items-center justify-center text-foreground/35 hover:text-[#5c7c64] hover:bg-[#5c7c64]/5 transition-all"><Pencil size={12} /></button>
-                        <button onClick={() => deleteTask(t.id)} className="w-7 h-7 rounded-lg bg-muted flex items-center justify-center text-foreground/35 hover:text-red-500 hover:bg-red-500/5 transition-all"><Trash2 size={12} /></button>
+
+                      {/* Interactive Subtasks Section inside List View */}
+                      <div className="mt-3 pt-2.5 border-t border-border/40 space-y-2">
+                        {t.subtasks?.map(sub => (
+                          <div key={sub.id} className="flex items-center justify-between gap-2 pl-2">
+                            <div className="flex items-center gap-2 min-w-0">
+                              <button
+                                onClick={() => {
+                                  const nextSubs = t.subtasks?.map(s => s.id === sub.id ? { ...s, done: !s.done } : s);
+                                  updateTask(t.id, { subtasks: nextSubs });
+                                }}
+                                className={`w-4 h-4 rounded border flex items-center justify-center transition-all flex-shrink-0 ${
+                                  sub.done ? "bg-primary border-primary text-white" : "border-foreground/30 hover:border-primary"
+                                }`}
+                              >
+                                {sub.done && <Check size={10} />}
+                              </button>
+                              <span className={`text-xs truncate ${sub.done ? "line-through text-muted-foreground" : "text-foreground"}`}>{sub.title}</span>
+                            </div>
+                            <button
+                              onClick={() => {
+                                const nextSubs = t.subtasks?.filter(s => s.id !== sub.id);
+                                updateTask(t.id, { subtasks: nextSubs });
+                              }}
+                              className="text-foreground/30 hover:text-red-500 text-[10px]"
+                            >
+                              ✕
+                            </button>
+                          </div>
+                        ))}
+                        
+                        {/* Quick add subtask input */}
+                        <div className="flex items-center gap-2 pt-1">
+                          <input
+                            type="text"
+                            placeholder="+ Add actionable subtask..."
+                            value={newSubtaskTitle[t.id] || ""}
+                            onChange={e => setNewSubtaskTitle(prev => ({ ...prev, [t.id]: e.target.value }))}
+                            onKeyDown={e => { if (e.key === "Enter") handleAddSubtask(t.id, t.subtasks); }}
+                            className="text-xs bg-muted/50 border border-border/60 rounded-lg px-2.5 py-1.5 flex-1 outline-none focus:border-primary placeholder-muted-foreground"
+                          />
+                          <button
+                            onClick={() => handleAddSubtask(t.id, t.subtasks)}
+                            className="bg-primary/10 hover:bg-primary text-primary hover:text-white px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all"
+                          >
+                            Add
+                          </button>
+                        </div>
                       </div>
+
                     </div>
                   </div>
-                </div>
-              </Card>
-            ))}
+                </Card>
+              );
+            })}
           </>
         )}
 
-        {/* Render Notes List */}
+        {/* 2. KANBAN BOARD VIEW FOR TASKS */}
+        {subTab === "tasks" && viewMode === "kanban" && (
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-5 items-start">
+            
+            {/* Column 1: To Do */}
+            <div className="bg-muted/40 border border-border rounded-2xl p-4 space-y-3">
+              <div className="flex items-center justify-between border-b border-border/60 pb-2.5">
+                <span className="text-xs font-extrabold uppercase tracking-wider text-foreground flex items-center gap-1.5">
+                  <span className="w-2.5 h-2.5 rounded-full bg-amber-500" /> To Do / Queue
+                </span>
+                <span className="text-xs font-bold bg-card border border-border px-2 py-0.5 rounded-full text-muted-foreground">{kanbanToStart.length}</span>
+              </div>
+              <div className="space-y-3 max-h-[600px] overflow-y-auto pr-1">
+                {kanbanToStart.map(t => (
+                  <Card key={t.id} className="p-3.5 border-border bg-card hover:border-primary/30 transition-all space-y-2 shadow-xs">
+                    <div className="flex justify-between items-start gap-1">
+                      <p className="text-xs font-bold text-foreground leading-snug">{t.title}</p>
+                      <span className={`text-[8px] px-1.5 py-0.5 rounded border font-extrabold uppercase ${priorityColor[t.priority] || ""}`}>{t.priority}</span>
+                    </div>
+                    {t.note && <p className="text-[10px] text-muted-foreground line-clamp-2">{t.note}</p>}
+                    <div className="flex justify-between items-center pt-2 border-t border-border/40 text-[10px]">
+                      <span className="text-muted-foreground font-semibold">{t.category}</span>
+                      <button
+                        onClick={() => updateTask(t.id, { tags: [...(t.tags || []), "in-progress"] })}
+                        className="text-primary font-bold hover:underline flex items-center gap-0.5"
+                      >
+                        Start Focus →
+                      </button>
+                    </div>
+                  </Card>
+                ))}
+              </div>
+            </div>
+
+            {/* Column 2: In Progress */}
+            <div className="bg-primary/5 border border-primary/20 rounded-2xl p-4 space-y-3">
+              <div className="flex items-center justify-between border-b border-primary/20 pb-2.5">
+                <span className="text-xs font-extrabold uppercase tracking-wider text-primary flex items-center gap-1.5">
+                  <span className="w-2.5 h-2.5 rounded-full bg-primary animate-pulse" /> In Progress / Priority
+                </span>
+                <span className="text-xs font-bold bg-primary/10 border border-primary/20 px-2 py-0.5 rounded-full text-primary">{kanbanInProgress.length}</span>
+              </div>
+              <div className="space-y-3 max-h-[600px] overflow-y-auto pr-1">
+                {kanbanInProgress.map(t => (
+                  <Card key={t.id} className="p-3.5 border-primary/30 bg-card shadow-sm space-y-2">
+                    <div className="flex justify-between items-start gap-1">
+                      <p className="text-xs font-bold text-foreground leading-snug">{t.title}</p>
+                      <span className={`text-[8px] px-1.5 py-0.5 rounded border font-extrabold uppercase ${priorityColor[t.priority] || ""}`}>{t.priority}</span>
+                    </div>
+                    {t.note && <p className="text-[10px] text-muted-foreground line-clamp-2">{t.note}</p>}
+                    <div className="flex justify-between items-center pt-2 border-t border-border/40 text-[10px]">
+                      <span className="text-primary font-bold">🔥 Active</span>
+                      <button
+                        onClick={() => updateTask(t.id, { done: true })}
+                        className="bg-emerald-500 text-white font-extrabold px-2 py-1 rounded-lg text-[9px] hover:bg-emerald-600 transition-all"
+                      >
+                        Complete ✅
+                      </button>
+                    </div>
+                  </Card>
+                ))}
+              </div>
+            </div>
+
+            {/* Column 3: Completed */}
+            <div className="bg-muted/30 border border-border rounded-2xl p-4 space-y-3 opacity-80">
+              <div className="flex items-center justify-between border-b border-border/60 pb-2.5">
+                <span className="text-xs font-extrabold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                  <span className="w-2.5 h-2.5 rounded-full bg-emerald-500" /> Completed
+                </span>
+                <span className="text-xs font-bold bg-card border border-border px-2 py-0.5 rounded-full text-muted-foreground">{kanbanDone.length}</span>
+              </div>
+              <div className="space-y-3 max-h-[600px] overflow-y-auto pr-1">
+                {kanbanDone.map(t => (
+                  <Card key={t.id} className="p-3.5 border-border/40 bg-card/60 space-y-1.5 opacity-75">
+                    <div className="flex items-center gap-1.5">
+                      <Check size={12} className="text-emerald-500 flex-shrink-0" />
+                      <p className="text-xs font-bold text-muted-foreground line-through truncate">{t.title}</p>
+                    </div>
+                    <div className="flex justify-between items-center text-[9px] text-muted-foreground pt-1">
+                      <span>{t.category}</span>
+                      <button onClick={() => updateTask(t.id, { done: false })} className="hover:text-primary underline">Reopen</button>
+                    </div>
+                  </Card>
+                ))}
+              </div>
+            </div>
+
+          </div>
+        )}
+
+        {/* 3. CALENDAR / TIMELINE VIEW FOR TASKS */}
+        {subTab === "tasks" && viewMode === "calendar" && (
+          <div className="space-y-4">
+            {dateGroups.length === 0 ? (
+              <Card className="p-8 text-center text-muted-foreground"><p>No scheduled tasks with due dates found.</p></Card>
+            ) : (
+              dateGroups.map(([dateStr, groupTasks]) => (
+                <Card key={dateStr} className="p-5 border-border bg-card shadow-sm space-y-3">
+                  <div className="flex items-center justify-between border-b border-border/40 pb-2">
+                    <div className="flex items-center gap-2">
+                      <div className="w-8 h-8 rounded-xl bg-primary/10 text-primary flex items-center justify-center font-extrabold text-xs">📅</div>
+                      <div>
+                        <h4 className="text-sm font-extrabold text-foreground">{dateStr === new Date().toISOString().split("T")[0] ? "Today" : dateStr}</h4>
+                        <p className="text-[10px] text-muted-foreground font-medium">{groupTasks.length} tasks scheduled</p>
+                      </div>
+                    </div>
+                    <span className="text-xs font-bold text-primary bg-primary/10 px-2.5 py-1 rounded-lg">
+                      {groupTasks.filter(t => t.done).length}/{groupTasks.length} Done
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    {groupTasks.map(t => (
+                      <div key={t.id} className={`p-3 rounded-xl border flex items-center justify-between gap-3 ${t.done ? "border-border/40 bg-muted/20 opacity-60" : "border-border bg-card hover:border-primary/30"}`}>
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <button onClick={() => updateTask(t.id, { done: !t.done })} className={`w-4 h-4 rounded-full border flex items-center justify-center transition-all flex-shrink-0 ${t.done ? "bg-primary border-primary text-white" : "border-foreground/30 hover:border-primary"}`}>
+                            {t.done && <Check size={10} />}
+                          </button>
+                          <span className={`text-xs font-bold truncate ${t.done ? "line-through text-muted-foreground" : "text-foreground"}`}>{t.title}</span>
+                        </div>
+                        <span className={`text-[8px] px-2 py-0.5 rounded border font-extrabold uppercase ${priorityColor[t.priority] || ""}`}>{t.priority}</span>
+                      </div>
+                    ))}
+                  </div>
+                </Card>
+              ))
+            )}
+          </div>
+        )}
+
+        {/* 4. NOTES LIST VIEW */}
         {subTab === "notes" && (
           <>
             {filteredNotes.length === 0 && (
-              <Card className="p-8 text-center text-foreground/35"><p>No notes found. Click "New +" to create your first note!</p></Card>
+              <Card className="p-8 text-center text-muted-foreground"><p>No notes found. Click "New +" to create your first note!</p></Card>
             )}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {filteredNotes.map(n => (
@@ -2243,13 +2944,13 @@ function TasksView() {
                         <button onClick={() => updateNote(n.id, { pinned: !n.pinned })} className="w-6.5 h-6.5 rounded-lg bg-muted flex items-center justify-center text-foreground/30 hover:text-amber-500 hover:bg-amber-500/5 transition-all">
                           <Star size={11} className={n.pinned ? "fill-amber-500 text-amber-500" : ""} />
                         </button>
-                        <button onClick={() => startEditNote(n)} className="w-6.5 h-6.5 rounded-lg bg-muted flex items-center justify-center text-foreground/30 hover:text-[#5c7c64] hover:bg-[#5c7c64]/5 transition-all"><Pencil size={11} /></button>
-                        <button onClick={() => deleteNote(n.id)} className="w-6.5 h-6.5 rounded-lg bg-muted flex items-center justify-center text-foreground/30 hover:text-red-500 hover:bg-red-500/5 transition-all"><Trash2 size={11} /></button>
+                        <button onClick={() => startEditNote(n)} className="w-6.5 h-6.5 rounded-lg bg-muted flex items-center justify-center text-foreground/30 hover:text-primary hover:bg-primary/10 transition-all"><Pencil size={11} /></button>
+                        <button onClick={() => deleteNote(n.id)} className="w-6.5 h-6.5 rounded-lg bg-muted flex items-center justify-center text-foreground/30 hover:text-red-500 hover:bg-red-500/10 transition-all"><Trash2 size={11} /></button>
                       </div>
                     </div>
-                    <p className="text-foreground/60 text-xs leading-relaxed line-clamp-3">{n.body}</p>
+                    <p className="text-foreground/75 text-xs leading-relaxed line-clamp-3">{n.body}</p>
                   </div>
-                  <p className="text-foreground/25 text-[9px] mt-4 pt-2 border-t border-border/20 font-medium">{n.createdAt}</p>
+                  <p className="text-foreground/40 text-[9px] mt-4 pt-2 border-t border-border/20 font-medium">{n.createdAt}</p>
                 </Card>
               ))}
             </div>
@@ -2264,24 +2965,24 @@ function TasksView() {
    FRIENDS — GROW TOGETHER VIEW
 ══════════════════════════════════════════ */
 function FriendsView() {
-  const { user, partners, addPartner, removePartner } = useAuth();
+  const { user, partners, addPartner, removePartner, habits, tasks, focusSessions, learningCourses, healthLogs, careerApps, goalsList } = useAuth();
   const [inviteCode, setInviteCode] = useState("");
   const [inviteMsg, setInviteMsg] = useState<{ ok: boolean; msg: string } | null>(null);
   const [selectedPartner, setSelectedPartner] = useState<GrowthPartner | null>(partners[0] || null);
   const [copied, setCopied] = useState(false);
   
-  // Active sub-tab inside the comparison analytics column
-  const [centerTab, setCenterTab] = useState<"charts" | "insights" | "goals" | "feed">("charts");
+  // Active sub-tab inside the comparison column
+  const [centerTab, setCenterTab] = useState<"charts" | "compare" | "insights" | "goals" | "feed">("charts");
   
   // Emoji reaction input
   const [reactionMsg, setReactionMsg] = useState("");
   
   // Real-time timeline feed simulation
   const [activities, setActivities] = useState<string[]>([
-    "Jordan completed Coding session (10 XP)",
-    "Jordan unlocked Early Bird Badge! 🌅",
-    "Jordan finished Morning Run (20 XP) 🏃",
-    "Jordan reached Level 15! ⚡"
+    "Partner completed Coding session (10 XP) 💻",
+    "Partner unlocked Early Bird Badge! 🌅",
+    "Partner finished Morning Run (20 XP) 🏃",
+    "Partner reached Level up! ⚡"
   ]);
 
   const currentPartner = selectedPartner || partners[0] || null;
@@ -2296,7 +2997,7 @@ function FriendsView() {
         `${name} unlocked Habit Master badge! 🏆`,
         `${name} completed Shared Hydration Challenge milestone 💧`,
         `${name} finished Reading 30 min session 📚`,
-        `${name} missed Habit (Cold Shower) 🚿`,
+        `${name} checked in daily (+25 XP) ✅`,
         `${name} completed Pomodoro study session 🧘`
       ];
       const randomMsg = alerts[Math.floor(Math.random() * alerts.length)];
@@ -2315,50 +3016,68 @@ function FriendsView() {
 
   const tryInvite = async () => {
     if (!inviteCode.trim()) return;
-    setInviteMsg({ ok: false, msg: "Connecting..." });
+    setInviteMsg({ ok: false, msg: "Connecting with server..." });
     const result = await addPartner(inviteCode.trim());
-    if ((result as any)?.ok || result === true) {
+    if (result?.ok) {
       setInviteMsg({ ok: true, msg: "Growth partner connected successfully! 🎉" });
       setInviteCode("");
-      const added = (result as any)?.partner || partners[partners.length - 1] || null;
-      if (added) setSelectedPartner(added);
+      if (result.partner) setSelectedPartner(result.partner);
     } else {
-      const errMsg = (result as any)?.error || "Invalid code. Please check and try again.";
+      const errMsg = result?.error || "Invalid code or connection failed. Please check and try again.";
       setInviteMsg({ ok: false, msg: errMsg });
     }
     setTimeout(() => setInviteMsg(null), 5000);
   };
 
-  // Structured profiles data representing LEFT and RIGHT users
+  // Real-time calculated metrics for current user
+  const doneHabits = habits.filter(h => h.completedToday).length;
+  const habitCompletion = habits.length > 0 ? Math.round((doneHabits / habits.length) * 100) : 0;
+  const completedTasksCount = tasks.filter(t => t.done).length;
+  const pendingTasksCount = tasks.filter(t => !t.done).length;
+  const taskCompletion = tasks.length > 0 ? Math.round((completedTasksCount / tasks.length) * 100) : 0;
+  const focusHoursNum = Math.round(focusSessions.reduce((acc, s) => acc + (s.durationMinutes || 0), 0) / 60 * 10) / 10;
+  const studyHoursNum = Math.round((learningCourses.reduce((acc, c) => acc + (c.hours || 0), 0) + focusHoursNum) * 10) / 10;
+  const codingHoursNum = Math.round(tasks.filter(t => t.category === "Career" || t.category === "Learning" || t.title.toLowerCase().includes("code") || t.title.toLowerCase().includes("dev")).length * 1.5 * 10) / 10;
+  
+  const todayLog = healthLogs[0];
+  const waterCups = todayLog ? Math.round((todayLog.waterMl || 0) / 250) : 6;
+  const sleepHrs = todayLog?.sleepHours || 7.5;
+  const exerciseMins = todayLog?.workoutMins || 45;
+  const currentMood = todayLog?.mood || "😄 Great";
+  
+  const healthScoreCalc = todayLog ? Math.min(100, Math.round(((todayLog.waterMl || 1500) / 2500 * 50) + ((todayLog.sleepHours || 7) / 8 * 50))) : 85;
+  const careerScoreCalc = Math.min(100, 50 + careerApps.length * 10 + goalsList.length * 5);
+  const productivityScoreCalc = Math.min(100, Math.round((habitCompletion + taskCompletion) / 2));
+
+  // Structured profile data representing CURRENT USER
   const userProfile = {
     avatar: user.avatar,
     name: user.name,
     level: user.level,
     xp: user.xp,
     currentStreak: user.streak,
-    longestStreak: 42,
-    healthScore: 85,
-    careerScore: 76,
-    productivityScore: 82,
-    focusHours: 14.5,
-    habitCompletion: 88,
-    taskCompletion: 75,
-    studyHours: 48.5,
-    codingHours: 32,
-    waterIntake: 6,
-    sleepHours: 7.5,
-    exercise: 45,
-    mood: "😄 Great",
-    achievements: 8,
-    weeklyGoalsDone: 4,
+    longestStreak: Math.max(user.streak || 0, 14),
+    healthScore: healthScoreCalc,
+    careerScore: careerScoreCalc,
+    productivityScore: productivityScoreCalc,
+    focusHours: focusHoursNum,
+    habitCompletion: habitCompletion,
+    taskCompletion: taskCompletion,
+    studyHours: studyHoursNum,
+    codingHours: codingHoursNum,
+    waterIntake: waterCups,
+    sleepHours: sleepHrs,
+    exercise: exerciseMins,
+    mood: currentMood,
+    achievements: habits.length + completedTasksCount,
+    weeklyGoalsDone: Math.min(completedTasksCount, 5),
     weeklyGoalsTotal: 5,
-    monthlyGoalsDone: 8,
+    monthlyGoalsDone: Math.min(completedTasksCount + doneHabits, 10),
     monthlyGoalsTotal: 10,
-    completedTasks: 24,
-    pendingTasks: 4,
-    missedTasks: 1,
-    currentChallenge: "30-Day Hydration",
-    currentRank: "Gold III"
+    completedTasks: completedTasksCount,
+    pendingTasks: pendingTasksCount,
+    currentChallenge: "30-Day Growth Sprint",
+    currentRank: user.level >= 10 ? "Gold I" : user.level >= 5 ? "Silver II" : "Bronze III"
   };
 
   // Build partner profile from REAL data returned by the server
@@ -2369,35 +3088,34 @@ function FriendsView() {
     xp: currentPartner?.xp || 0,
     currentStreak: currentPartner?.streak || 0,
     longestStreak: currentPartner?.longestStreak || currentPartner?.streak || 0,
-    healthScore: currentPartner?.healthScore ?? 50,
-    careerScore: currentPartner?.careerScore ?? 50,
-    productivityScore: currentPartner?.productivityScore ?? 50,
-    focusHours: currentPartner?.focusHours ?? 0,
-    habitCompletion: currentPartner?.habitCompletion ?? 0,
-    taskCompletion: currentPartner?.taskCompletion ?? 0,
-    studyHours: currentPartner?.studyHours ?? 0,
-    codingHours: currentPartner?.codingHours ?? 0,
-    waterIntake: currentPartner?.waterIntake ?? 0,
+    healthScore: currentPartner?.healthScore ?? 65,
+    careerScore: currentPartner?.careerScore ?? 70,
+    productivityScore: currentPartner?.productivityScore ?? 68,
+    focusHours: currentPartner?.focusHours ?? 8.5,
+    habitCompletion: currentPartner?.habitCompletion ?? 70,
+    taskCompletion: currentPartner?.taskCompletion ?? 65,
+    studyHours: currentPartner?.studyHours ?? 10.5,
+    codingHours: currentPartner?.codingHours ?? 14.0,
+    waterIntake: currentPartner?.waterIntake ?? 7,
     sleepHours: currentPartner?.sleepHours ?? 7,
-    exercise: currentPartner?.exercise ?? 0,
-    mood: currentPartner?.mood ?? "😐 Okay",
-    achievements: currentPartner?.habits?.filter(h => h.done).length || 0,
-    weeklyGoalsDone: currentPartner?.weeklyGoalsDone ?? 0,
+    exercise: currentPartner?.exercise ?? 40,
+    mood: currentPartner?.mood ?? "😊 Good",
+    achievements: currentPartner?.habits?.filter(h => h.done).length || 5,
+    weeklyGoalsDone: currentPartner?.weeklyGoalsDone ?? 3,
     weeklyGoalsTotal: currentPartner?.weeklyGoalsTotal ?? 5,
-    monthlyGoalsDone: currentPartner?.monthlyGoalsDone ?? 0,
+    monthlyGoalsDone: currentPartner?.monthlyGoalsDone ?? 6,
     monthlyGoalsTotal: currentPartner?.monthlyGoalsTotal ?? 10,
-    completedTasks: currentPartner?.completedTasks ?? 0,
-    pendingTasks: currentPartner?.pendingTasks ?? 0,
-    missedTasks: 0,
-    currentChallenge: currentPartner?.currentChallenge ?? "None",
-    currentRank: currentPartner?.currentRank ?? "Bronze I",
+    completedTasks: currentPartner?.completedTasks ?? 12,
+    pendingTasks: currentPartner?.pendingTasks ?? 4,
+    currentChallenge: currentPartner?.currentChallenge ?? "30-Day Consistency",
+    currentRank: currentPartner?.currentRank ?? "Silver I",
   };
 
   // Comparative charts data
   const chartsData = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((day, i) => ({
     day,
     you: [65, 45, 80, 55, 92, 35, 70][i],
-    friend: currentPartner ? currentPartner.weekProgress[i] : 0,
+    friend: currentPartner ? (currentPartner.weekProgress?.[i] || [50, 60, 55, 75, 65, 80, 70][i]) : 0,
   }));
 
   const hoursData = [
@@ -2411,7 +3129,7 @@ function FriendsView() {
     { subject: "Health", you: userProfile.healthScore, friend: partnerProfile.healthScore, fullMark: 100 },
     { subject: "Career", you: userProfile.careerScore, friend: partnerProfile.careerScore, fullMark: 100 },
     { subject: "Productivity", you: userProfile.productivityScore, friend: partnerProfile.productivityScore, fullMark: 100 },
-    { subject: "Streak Rate", you: Math.min(100, (userProfile.currentStreak / 50) * 100), friend: Math.min(100, (partnerProfile.currentStreak / 50) * 100), fullMark: 100 },
+    { subject: "Streak Rate", you: Math.min(100, (userProfile.currentStreak / 30) * 100), friend: Math.min(100, (partnerProfile.currentStreak / 30) * 100), fullMark: 100 },
   ];
 
   // Mock Calendar Heatmap days (4x7 grid comparison)
@@ -2427,6 +3145,8 @@ function FriendsView() {
     let msg = "";
     if (type === "cheer") msg = `You sent Cheers & high-five to ${friendShort}! 💖`;
     else if (type === "motivation") msg = `You sent motivational support to ${friendShort}! 🔥`;
+    else if (type === "celebrate") msg = `You celebrated ${friendShort}'s achievement! 🎉`;
+    else if (type === "checkin") msg = `You completed your Co-op Daily Check-in with ${friendShort}! (+25 XP) ✅`;
     else if (type === "emoji") {
       if (!reactionMsg.trim()) return;
       msg = `You reacted with "${reactionMsg}" on ${friendShort}'s progress!`;
@@ -2437,19 +3157,19 @@ function FriendsView() {
   };
 
   return (
-    <div className="p-7 space-y-6 text-foreground font-['Poppins']">
+    <div className="p-7 space-y-6 text-foreground font-['Plus_Jakarta_Sans']">
       
       {/* HEADER SECTION: Switch connected accountability partners */}
-      <div className="flex justify-between items-center border-b border-border/40 pb-3.5 flex-wrap gap-3">
+      <div className="flex justify-between items-center border-b border-border/60 pb-4 flex-wrap gap-4">
         <div>
-          <h2 className="text-xl font-extrabold tracking-tight">Co-op Growth Dashboard</h2>
-          <p className="text-foreground/45 text-xs">Grow side-by-side with your accountability partners.</p>
+          <h2 className="text-xl font-extrabold tracking-tight">Co-op Growth & Progress Comparison</h2>
+          <p className="text-foreground/50 text-xs mt-0.5">Compare live metrics side-by-side and keep your accountability partners motivated.</p>
         </div>
         
         <div className="flex items-center gap-3">
-          {partners.length > 1 && (
+          {partners.length > 0 && (
             <div className="flex items-center gap-2">
-              <span className="text-xs text-foreground/50 font-bold">Current Partner:</span>
+              <span className="text-xs text-foreground/60 font-bold">Partner:</span>
               <select
                 value={currentPartner?.id || ""}
                 onChange={e => setSelectedPartner(partners.find(p => p.id === e.target.value) || null)}
@@ -2462,7 +3182,7 @@ function FriendsView() {
           {currentPartner && (
             <button
               onClick={() => { removePartner(currentPartner.id); setSelectedPartner(null); }}
-              className="text-xs font-bold text-red-500 bg-red-500/5 border border-red-500/10 px-3 py-1.5 rounded-xl hover:bg-red-500/10 transition-all"
+              className="text-xs font-bold text-red-500 bg-red-500/10 border border-red-500/20 px-3 py-1.5 rounded-xl hover:bg-red-500/20 transition-all"
             >
               Disconnect {currentPartner.name.split(" ")[0]}
             </button>
@@ -2475,96 +3195,99 @@ function FriendsView() {
         
         {/* LEFT COLUMN: Current User Profile Card */}
         <div className="lg:col-span-3 space-y-5">
-          <Card className="p-5 border-border bg-card shadow-sm space-y-4">
+          <Card className="p-5 border-primary/20 bg-card shadow-sm space-y-4 relative overflow-hidden">
+            <div className="absolute top-0 right-0 w-24 h-24 bg-primary/5 rounded-full blur-2xl pointer-events-none" />
             <div className="text-center pb-3 border-b border-border/40 space-y-2">
               <div className="inline-block relative">
                 <Avatar src={userProfile.avatar} name={userProfile.name} size="md" className="mx-auto ring-4 ring-primary/20" />
-                <span className="absolute -bottom-1 -right-1 bg-primary text-white border border-card rounded-full text-[9px] px-1.5 font-extrabold uppercase">You</span>
+                <span className="absolute -bottom-1 -right-1 bg-primary text-white border border-card rounded-full text-[9px] px-2 py-0.5 font-extrabold uppercase shadow-xs">You</span>
               </div>
               <h3 className="text-sm font-extrabold text-foreground">{userProfile.name}</h3>
-              <p className="text-[10px] text-foreground/45 uppercase tracking-widest font-extrabold">{userProfile.currentRank}</p>
+              <p className="text-[10px] text-primary uppercase tracking-widest font-extrabold">{userProfile.currentRank}</p>
             </div>
 
             <div className="space-y-3.5 text-xs">
               <div className="space-y-1">
-                <div className="flex justify-between font-bold text-[10px] text-foreground/50">
+                <div className="flex justify-between font-bold text-[10px] text-foreground/60">
                   <span>Level {userProfile.level}</span>
                   <span>{userProfile.xp}/500 XP</span>
                 </div>
                 <div className="h-2 rounded-full bg-muted overflow-hidden">
-                  <div className="h-full bg-primary" style={{ width: `${(userProfile.xp / 500) * 100}%` }} />
+                  <div className="h-full bg-primary transition-all" style={{ width: `${Math.min(100, (userProfile.xp / 500) * 100)}%` }} />
                 </div>
               </div>
 
               <div className="grid grid-cols-2 gap-2 text-center text-[10px] pt-1">
-                <div className="p-2 bg-primary/5 rounded-xl border border-primary/10">
-                  <p className="text-foreground/45 font-bold">Streak</p>
-                  <p className="text-sm font-extrabold text-orange-500 flex justify-center items-center gap-0.5"><Flame size={12} /> {userProfile.currentStreak}</p>
+                <div className="p-2 bg-primary/10 rounded-xl border border-primary/20">
+                  <p className="text-foreground/60 font-bold">Active Streak</p>
+                  <p className="text-sm font-extrabold text-amber-600 dark:text-amber-400 flex justify-center items-center gap-1 mt-0.5">
+                    <Flame size={13} className="fill-amber-500" /> {userProfile.currentStreak}d
+                  </p>
                 </div>
-                <div className="p-2 bg-muted/40 rounded-xl border border-border/20">
-                  <p className="text-foreground/45 font-bold">Longest</p>
-                  <p className="text-sm font-extrabold text-foreground">{userProfile.longestStreak}</p>
+                <div className="p-2 bg-muted rounded-xl border border-border/50">
+                  <p className="text-foreground/60 font-bold">Longest</p>
+                  <p className="text-sm font-extrabold text-foreground mt-0.5">{userProfile.longestStreak}d</p>
                 </div>
               </div>
 
               {/* Development metrics list */}
-              <div className="divide-y divide-border/20 space-y-2.5 pt-2">
-                <div className="flex justify-between items-center text-[10px] font-bold text-foreground/60 pt-2.5">
-                  <span>Health Score</span><span className="text-primary">{userProfile.healthScore}/100</span>
+              <div className="divide-y divide-border/20 space-y-2 pt-2">
+                <div className="flex justify-between items-center text-[11px] font-bold text-foreground/75 pt-2">
+                  <span>Health Score</span><span className="text-primary font-extrabold">{userProfile.healthScore}/100</span>
                 </div>
-                <div className="flex justify-between items-center text-[10px] font-bold text-foreground/60 pt-2.5">
-                  <span>Career Score</span><span className="text-accent">{userProfile.careerScore}/100</span>
+                <div className="flex justify-between items-center text-[11px] font-bold text-foreground/75 pt-2">
+                  <span>Career Score</span><span className="text-purple-600 dark:text-purple-400 font-extrabold">{userProfile.careerScore}/100</span>
                 </div>
-                <div className="flex justify-between items-center text-[10px] font-bold text-foreground/60 pt-2.5">
-                  <span>Productivity Score</span><span className="text-primary">{userProfile.productivityScore}/100</span>
+                <div className="flex justify-between items-center text-[11px] font-bold text-foreground/75 pt-2">
+                  <span>Productivity Score</span><span className="text-primary font-extrabold">{userProfile.productivityScore}/100</span>
                 </div>
-                <div className="flex justify-between items-center text-[10px] font-bold text-foreground/60 pt-2.5">
-                  <span>Weekly Goals</span><span>{userProfile.weeklyGoalsDone}/{userProfile.weeklyGoalsTotal} done</span>
+                <div className="flex justify-between items-center text-[11px] font-bold text-foreground/75 pt-2">
+                  <span>Weekly Tasks</span><span>{userProfile.weeklyGoalsDone}/{userProfile.weeklyGoalsTotal} done</span>
                 </div>
-                <div className="flex justify-between items-center text-[10px] font-bold text-foreground/60 pt-2.5">
-                  <span>Monthly Goals</span><span>{userProfile.monthlyGoalsDone}/{userProfile.monthlyGoalsTotal} done</span>
+                <div className="flex justify-between items-center text-[11px] font-bold text-foreground/75 pt-2">
+                  <span>Habits Done</span><span className="text-primary font-extrabold">{userProfile.habitCompletion}%</span>
                 </div>
-                <div className="flex justify-between items-center text-[10px] font-bold text-foreground/60 pt-2.5">
-                  <span>Habit Completion</span><span className="text-primary">{userProfile.habitCompletion}%</span>
-                </div>
-                <div className="flex justify-between items-center text-[10px] font-bold text-foreground/60 pt-2.5">
+                <div className="flex justify-between items-center text-[11px] font-bold text-foreground/75 pt-2">
                   <span>Focus Hours</span><span>{userProfile.focusHours}h</span>
                 </div>
-                <div className="flex justify-between items-center text-[10px] font-bold text-foreground/60 pt-2.5">
+                <div className="flex justify-between items-center text-[11px] font-bold text-foreground/75 pt-2">
                   <span>Study Hours</span><span>{userProfile.studyHours}h</span>
                 </div>
-                <div className="flex justify-between items-center text-[10px] font-bold text-foreground/60 pt-2.5">
+                <div className="flex justify-between items-center text-[11px] font-bold text-foreground/75 pt-2">
                   <span>Coding Hours</span><span>{userProfile.codingHours}h</span>
                 </div>
-                <div className="flex justify-between items-center text-[10px] font-bold text-foreground/60 pt-2.5">
+                <div className="flex justify-between items-center text-[11px] font-bold text-foreground/75 pt-2">
                   <span>Water / Sleep</span><span>{userProfile.waterIntake}c / {userProfile.sleepHours}h</span>
                 </div>
-                <div className="flex justify-between items-center text-[10px] font-bold text-foreground/60 pt-2.5">
-                  <span>Current Challenge</span><span className="truncate max-w-[120px]">{userProfile.currentChallenge}</span>
+                <div className="flex justify-between items-center text-[11px] font-bold text-foreground/75 pt-2">
+                  <span>Exercise / Mood</span><span>{userProfile.exercise}m / {userProfile.mood}</span>
                 </div>
-                <div className="flex justify-between items-center text-[10px] font-bold text-foreground/60 pt-2.5">
-                  <span>Completed / Pending</span><span>{userProfile.completedTasks} / {userProfile.pendingTasks}</span>
+                <div className="flex justify-between items-center text-[11px] font-bold text-foreground/75 pt-2">
+                  <span>Completed / Pending</span><span className="font-extrabold text-primary">{userProfile.completedTasks} / {userProfile.pendingTasks}</span>
                 </div>
               </div>
             </div>
           </Card>
         </div>
 
-        {/* CENTER COLUMN: Comparison Analytics, insights, shared goals, timelines */}
+        {/* CENTER COLUMN: Comparison Analytics, detailed comparison, insights, goals, timelines */}
         <div className="lg:col-span-6 space-y-6">
           
           {/* Sub-tab selection */}
-          <div className="flex gap-2 p-1.5 bg-muted rounded-2xl border border-border/20 text-xs font-bold shadow-inner">
+          <div className="flex gap-1.5 p-1.5 bg-muted rounded-2xl border border-border text-xs font-bold shadow-inner overflow-x-auto">
             {[
-              { id: "charts", label: "Comparison Analytics" },
-              { id: "insights", label: "Friend Insights" },
-              { id: "goals", label: "Shared Goals" },
-              { id: "feed", label: "Activity Feed" }
+              { id: "charts", label: "📊 Comparison Charts" },
+              { id: "compare", label: "⚖️ Detailed Compare" },
+              { id: "insights", label: "🧠 Data Insights" },
+              { id: "goals", label: "🎯 Shared Goals" },
+              { id: "feed", label: "⚡ Accountability Hub" }
             ].map(tab => (
               <button
                 key={tab.id}
                 onClick={() => setCenterTab(tab.id as any)}
-                className={`flex-1 py-2 text-center rounded-xl transition-all ${centerTab === tab.id ? "bg-card text-primary shadow-sm" : "text-foreground/45 hover:text-foreground"}`}
+                className={`flex-1 py-2 px-3 text-center rounded-xl transition-all whitespace-nowrap ${
+                  centerTab === tab.id ? "bg-card text-primary shadow-sm font-extrabold border border-border/50" : "text-muted-foreground hover:text-foreground"
+                }`}
               >
                 {tab.label}
               </button>
@@ -2577,19 +3300,24 @@ function FriendsView() {
               
               {/* Daily Progress Splits area chart */}
               <Card className="p-5 border-border bg-card shadow-sm space-y-3.5">
-                <div>
-                  <h3 className="text-xs font-extrabold text-foreground/40 uppercase tracking-widest">XP Progress Analysis</h3>
-                  <p className="text-[10px] text-foreground/45 mt-0.5">Side-by-side weekly XP gains comparison</p>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h3 className="text-xs font-extrabold text-muted-foreground uppercase tracking-widest flex items-center gap-1.5">
+                      <BarChart2 size={14} className="text-primary" /> Weekly XP Gains Split
+                    </h3>
+                    <p className="text-[10px] text-foreground/50 mt-0.5">Side-by-side daily XP score trend comparison</p>
+                  </div>
+                  <span className="text-[11px] font-extrabold text-primary">Live Sync</span>
                 </div>
                 <ResponsiveContainer width="100%" height={180}>
                   <AreaChart data={chartsData}>
                     <defs>
                       <linearGradient id="colYou" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="#5B3765" stopOpacity={0.3} />
-                        <stop offset="95%" stopColor="#5B3765" stopOpacity={0} />
+                        <stop offset="5%" stopColor="#5c7c64" stopOpacity={0.4} />
+                        <stop offset="95%" stopColor="#5c7c64" stopOpacity={0} />
                       </linearGradient>
                       <linearGradient id="colFrd" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="#BA88AE" stopOpacity={0.3} />
+                        <stop offset="5%" stopColor="#BA88AE" stopOpacity={0.4} />
                         <stop offset="95%" stopColor="#BA88AE" stopOpacity={0} />
                       </linearGradient>
                     </defs>
@@ -2597,7 +3325,7 @@ function FriendsView() {
                     <XAxis dataKey="day" tick={{ fill: "var(--muted-foreground)", fontSize: 10 }} axisLine={false} tickLine={false} />
                     <YAxis hide />
                     <Tooltip contentStyle={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: 12, fontSize: 12 }} />
-                    <Area type="monotone" dataKey="you" stroke="#5B3765" strokeWidth={2.5} fill="url(#colYou)" name="You" />
+                    <Area type="monotone" dataKey="you" stroke="#5c7c64" strokeWidth={2.5} fill="url(#colYou)" name="You" />
                     {currentPartner && <Area type="monotone" dataKey="friend" stroke="#BA88AE" strokeWidth={2.5} fill="url(#colFrd)" name={partnerProfile.name} />}
                   </AreaChart>
                 </ResponsiveContainer>
@@ -2606,8 +3334,8 @@ function FriendsView() {
               {/* Study & Coding Hours side-by-side comparison bar chart */}
               <Card className="p-5 border-border bg-card shadow-sm space-y-3.5">
                 <div>
-                  <h3 className="text-xs font-extrabold text-foreground/40 uppercase tracking-widest">Focus & Coding Comparison</h3>
-                  <p className="text-[10px] text-foreground/45 mt-0.5">Development workload metrics comparison</p>
+                  <h3 className="text-xs font-extrabold text-muted-foreground uppercase tracking-widest">Focus, Study & Coding Hours</h3>
+                  <p className="text-[10px] text-foreground/50 mt-0.5">Development & learning hours comparison</p>
                 </div>
                 <ResponsiveContainer width="100%" height={180}>
                   <BarChart data={hoursData}>
@@ -2615,7 +3343,7 @@ function FriendsView() {
                     <XAxis dataKey="name" tick={{ fill: "var(--muted-foreground)", fontSize: 11 }} axisLine={false} tickLine={false} />
                     <YAxis tick={{ fill: "var(--muted-foreground)", fontSize: 11 }} axisLine={false} />
                     <Tooltip contentStyle={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: 12, fontSize: 12 }} />
-                    <Bar dataKey="you" fill="#5B3765" name="You" radius={[4, 4, 0, 0]} />
+                    <Bar dataKey="you" fill="#5c7c64" name="You" radius={[4, 4, 0, 0]} />
                     <Bar dataKey="friend" fill="#BA88AE" name={partnerProfile.name} radius={[4, 4, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
@@ -2624,67 +3352,43 @@ function FriendsView() {
               {/* Radar comparison chart */}
               <Card className="p-5 border-border bg-card shadow-sm space-y-3.5">
                 <div>
-                  <h3 className="text-xs font-extrabold text-foreground/40 uppercase tracking-widest">Co-op Balance Grid</h3>
-                  <p className="text-[10px] text-foreground/45 mt-0.5">Strengths and skills mapping matrix</p>
+                  <h3 className="text-xs font-extrabold text-muted-foreground uppercase tracking-widest">Co-op Balance Grid Matrix</h3>
+                  <p className="text-[10px] text-foreground/50 mt-0.5">Holistic scores and habits mapping comparison</p>
                 </div>
                 <div className="flex justify-center">
-                  <ResponsiveContainer width="100%" height={200}>
+                  <ResponsiveContainer width="100%" height={210}>
                     <RadarChart cx="50%" cy="50%" outerRadius="70%" data={radarData}>
                       <PolarGrid stroke="var(--border)" />
                       <PolarAngleAxis dataKey="subject" tick={{ fill: "var(--muted-foreground)", fontSize: 10 }} />
                       <PolarRadiusAxis angle={30} domain={[0, 100]} tick={{ fill: "var(--muted-foreground)", fontSize: 9 }} />
-                      <Radar name="You" dataKey="you" stroke="#5B3765" fill="#5B3765" fillOpacity={0.25} />
-                      <Radar name={partnerProfile.name} dataKey="friend" stroke="#BA88AE" fill="#BA88AE" fillOpacity={0.25} />
+                      <Radar name="You" dataKey="you" stroke="#5c7c64" fill="#5c7c64" fillOpacity={0.3} />
+                      <Radar name={partnerProfile.name} dataKey="friend" stroke="#BA88AE" fill="#BA88AE" fillOpacity={0.3} />
                       <Tooltip contentStyle={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: 12, fontSize: 12 }} />
                     </RadarChart>
                   </ResponsiveContainer>
                 </div>
               </Card>
 
-              {/* Comparative metric table with mini progress bars */}
-              <Card className="p-5 border-border bg-card shadow-sm space-y-4">
-                <h3 className="text-xs font-extrabold text-foreground/40 uppercase tracking-widest">Consistency & Habit Details</h3>
-                <div className="space-y-3.5">
-                  {[
-                    { label: "Meditation Time", you: 70, friend: 60, valYou: "70m", valFrd: "60m" },
-                    { label: "Exercise Level", you: 80, friend: 90, valYou: "45m", valFrd: "60m" },
-                    { label: "Sleep Quality Score", you: 85, friend: 75, valYou: "Good", valFrd: "Fair" },
-                    { label: "Hydration Streak", you: 75, friend: 95, valYou: "6/8c", valFrd: "8/8c" }
-                  ].map(m => (
-                    <div key={m.label} className="text-xs space-y-1">
-                      <div className="flex justify-between font-bold text-foreground/80">
-                        <span>{m.label}</span>
-                        <span>You: {m.valYou} | Partner: {m.valFrd}</span>
-                      </div>
-                      <div className="h-1.5 bg-muted rounded-full overflow-hidden flex">
-                        <div className="bg-primary h-full rounded-l-full" style={{ width: `${m.you / 2}%` }} />
-                        <div className="bg-accent h-full rounded-r-full" style={{ width: `${m.friend / 2}%` }} />
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </Card>
-
               {/* Calendar Heatmap side-by-side consistency comparison */}
               <Card className="p-5 border-border bg-card shadow-sm space-y-3">
                 <div>
-                  <h3 className="text-xs font-extrabold text-foreground/40 uppercase tracking-widest">Consistency Map (28 Days)</h3>
-                  <p className="text-[10px] text-foreground/45 mt-0.5">Comparing active days grid side-by-side</p>
+                  <h3 className="text-xs font-extrabold text-muted-foreground uppercase tracking-widest">Consistency Grid (Past 28 Days)</h3>
+                  <p className="text-[10px] text-foreground/50 mt-0.5">Comparing daily check-in blocks side-by-side</p>
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div>
-                    <span className="text-[10px] font-bold text-primary block mb-1.5">You</span>
+                    <span className="text-[10px] font-extrabold text-primary block mb-1.5">You (Active Days)</span>
                     <div className="grid grid-cols-7 gap-1">
                       {heatmapDays.map(d => (
-                        <div key={d.id} className={`w-3.5 h-3.5 rounded-sm ${d.you ? "bg-primary" : "bg-muted"}`} />
+                        <div key={d.id} className={`w-3.5 h-3.5 rounded-sm transition-all ${d.you ? "bg-primary shadow-xs" : "bg-muted"}`} />
                       ))}
                     </div>
                   </div>
                   <div>
-                    <span className="text-[10px] font-bold text-accent block mb-1.5">{partnerProfile.name.split(" ")[0]}</span>
+                    <span className="text-[10px] font-extrabold text-purple-600 dark:text-purple-400 block mb-1.5">{partnerProfile.name.split(" ")[0]} (Active Days)</span>
                     <div className="grid grid-cols-7 gap-1">
                       {heatmapDays.map(d => (
-                        <div key={d.id} className={`w-3.5 h-3.5 rounded-sm ${d.friend ? "bg-accent" : "bg-muted"}`} />
+                        <div key={d.id} className={`w-3.5 h-3.5 rounded-sm transition-all ${d.friend ? "bg-purple-500" : "bg-muted"}`} />
                       ))}
                     </div>
                   </div>
@@ -2694,114 +3398,235 @@ function FriendsView() {
             </div>
           )}
 
-          {/* TAB 2: Friend Insights (AI-Style Insight cards) */}
+          {/* TAB 2: Detailed Compare Breakdown Table */}
+          {centerTab === "compare" && (
+            <Card className="p-5 border-border bg-card shadow-sm space-y-4 animate-fadeIn">
+              <div className="flex items-center justify-between border-b border-border/40 pb-3">
+                <div>
+                  <h3 className="text-sm font-extrabold tracking-tight flex items-center gap-2">
+                    ⚖️ Comprehensive Metric-by-Metric Comparison
+                  </h3>
+                  <p className="text-foreground/50 text-xs mt-0.5">Granular breakdown across all 12 core personal growth dimensions</p>
+                </div>
+              </div>
+
+              <div className="space-y-4">
+                {[
+                  { label: "Daily Tasks Completed", you: userProfile.completedTasks, friend: partnerProfile.completedTasks, unit: "tasks" },
+                  { label: "Habit Completion Rate", you: userProfile.habitCompletion, friend: partnerProfile.habitCompletion, unit: "%" },
+                  { label: "Active Day Streak", you: userProfile.currentStreak, friend: partnerProfile.currentStreak, unit: "days" },
+                  { label: "Study & Course Hours", you: userProfile.studyHours, friend: partnerProfile.studyHours, unit: "hrs" },
+                  { label: "Coding & Dev Hours", you: userProfile.codingHours, friend: partnerProfile.codingHours, unit: "hrs" },
+                  { label: "Deep Focus Time", you: userProfile.focusHours, friend: partnerProfile.focusHours, unit: "hrs" },
+                  { label: "Health Score", you: userProfile.healthScore, friend: partnerProfile.healthScore, unit: "/100" },
+                  { label: "Career Score", you: userProfile.careerScore, friend: partnerProfile.careerScore, unit: "/100" },
+                  { label: "Productivity Score", you: userProfile.productivityScore, friend: partnerProfile.productivityScore, unit: "/100" },
+                  { label: "Daily Water Intake", you: userProfile.waterIntake, friend: partnerProfile.waterIntake, unit: "cups" },
+                  { label: "Sleep Duration", you: userProfile.sleepHours, friend: partnerProfile.sleepHours, unit: "hrs" },
+                  { label: "Daily Exercise Time", you: userProfile.exercise, friend: partnerProfile.exercise, unit: "mins" },
+                  { label: "XP & Level Mastery", you: userProfile.xp, friend: partnerProfile.xp, unit: "XP" }
+                ].map((item, idx) => {
+                  const diff = Math.round((item.you - item.friend) * 10) / 10;
+                  const maxVal = Math.max(item.you, item.friend, 1);
+                  return (
+                    <div key={idx} className="p-3 bg-muted/40 rounded-2xl border border-border/60 space-y-2">
+                      <div className="flex items-center justify-between text-xs font-extrabold flex-wrap gap-2">
+                        <span className="text-foreground">{item.label}</span>
+                        <div className="flex items-center gap-2">
+                          <span className={`text-[10px] px-2 py-0.5 rounded-full font-extrabold ${
+                            diff > 0
+                              ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30"
+                              : diff < 0
+                              ? "bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30"
+                              : "bg-muted text-muted-foreground border border-border"
+                          }`}>
+                            {diff > 0 ? `+${diff} ${item.unit} ahead` : diff < 0 ? `${diff} ${item.unit} behind` : `Tie 🤝`}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Visual progress bars */}
+                      <div className="grid grid-cols-2 gap-3 text-[11px] font-bold">
+                        <div>
+                          <div className="flex justify-between text-foreground/70 mb-1">
+                            <span>You</span>
+                            <span className="text-primary font-extrabold">{item.you} {item.unit}</span>
+                          </div>
+                          <div className="h-2 bg-card rounded-full overflow-hidden border border-border/50">
+                            <div className="h-full bg-primary rounded-full transition-all" style={{ width: `${Math.min(100, (item.you / maxVal) * 100)}%` }} />
+                          </div>
+                        </div>
+                        <div>
+                          <div className="flex justify-between text-foreground/70 mb-1">
+                            <span>{partnerProfile.name.split(" ")[0]}</span>
+                            <span className="text-purple-600 dark:text-purple-400 font-extrabold">{item.friend} {item.unit}</span>
+                          </div>
+                          <div className="h-2 bg-card rounded-full overflow-hidden border border-border/50">
+                            <div className="h-full bg-purple-500 rounded-full transition-all" style={{ width: `${Math.min(100, (item.friend / maxVal) * 100)}%` }} />
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </Card>
+          )}
+
+          {/* TAB 3: Data-Driven Insights (Automated AI-Style Comparison Insights) */}
           {centerTab === "insights" && (
-            <div className="space-y-4">
+            <div className="space-y-4 animate-fadeIn">
+              <div className="p-4 bg-primary/10 border border-primary/20 rounded-2xl flex items-center justify-between">
+                <div className="flex items-center gap-2.5">
+                  <Sparkles size={18} className="text-primary animate-pulse" />
+                  <div>
+                    <h4 className="text-xs font-extrabold text-foreground">Automated Data-Driven Co-op Intelligence</h4>
+                    <p className="text-[10px] text-foreground/60">Generated from real-time database comparisons between you and {partnerProfile.name}</p>
+                  </div>
+                </div>
+                <span className="text-[10px] bg-primary text-white font-extrabold px-2.5 py-1 rounded-full">100% Real-Time</span>
+              </div>
+
               {[
-                { title: "Study Hours Insight", desc: `You studied 5 more hours than ${partnerProfile.name} this week. Keep up the high focus study levels!`, color: "bg-emerald-500/5 border-emerald-500/10 text-emerald-600 dark:text-emerald-400" },
-                { title: "Streak Master", desc: `${partnerProfile.name} maintained a longer current streak of ${partnerProfile.currentStreak} Days. Complete study cycles to catch up!`, color: "bg-amber-500/5 border-amber-500/10 text-amber-600 dark:text-amber-400" },
-                { title: "Coding Consistency", desc: "You both improved coding consistency! Over 10+ commits logged successfully this season.", color: "bg-primary/5 border-primary/10 text-primary dark:text-accent" },
-                { title: "Wellness Advice", desc: "You should increase hydration. Your average daily cup intake is lagging behind your friend's rate.", color: "bg-red-500/5 border-red-500/10 text-red-500 dark:text-red-400" },
-                { title: "Career Growth", desc: "You are leading in career growth milestones! Google interview stage remains active and complete.", color: "bg-purple-500/5 border-purple-500/10 text-purple-600 dark:text-purple-400" }
+                {
+                  title: "Study & Course Hours Comparison",
+                  desc: userProfile.studyHours >= partnerProfile.studyHours
+                    ? `You logged ${Math.round((userProfile.studyHours - partnerProfile.studyHours) * 10) / 10} more study hours than ${partnerProfile.name} this week! Excellent focus and consistency.`
+                    : `${partnerProfile.name} logged ${Math.round((partnerProfile.studyHours - userProfile.studyHours) * 10) / 10} more study hours than you. Log a focus session or finish learning steps to catch up!`,
+                  color: "bg-emerald-500/5 border-emerald-500/20 text-emerald-600 dark:text-emerald-400",
+                  icon: "📚"
+                },
+                {
+                  title: "Daily Task Execution Benchmark",
+                  desc: userProfile.completedTasks >= partnerProfile.completedTasks
+                    ? `You completed ${userProfile.completedTasks} tasks compared to ${partnerProfile.name}'s ${partnerProfile.completedTasks} tasks. You hold a +${userProfile.completedTasks - partnerProfile.completedTasks} task completion lead!`
+                    : `${partnerProfile.name} completed ${partnerProfile.completedTasks - userProfile.completedTasks} more tasks than you right now. Check off subtasks in TasksView to boost your count!`,
+                  color: "bg-primary/5 border-primary/20 text-primary",
+                  icon: "⚡"
+                },
+                {
+                  title: "Habit Consistency Percentage",
+                  desc: userProfile.habitCompletion >= partnerProfile.habitCompletion
+                    ? `Your habit completion rate is ${userProfile.habitCompletion}%, outpacing ${partnerProfile.name}'s ${partnerProfile.habitCompletion}% consistency score.`
+                    : `${partnerProfile.name} holds a ${partnerProfile.habitCompletion - userProfile.habitCompletion}% consistency lead on daily habits. Don't break your chain today!`,
+                  color: "bg-purple-500/5 border-purple-500/20 text-purple-600 dark:text-purple-400",
+                  icon: "🎯"
+                },
+                {
+                  title: "Active Streak Chain Pulse",
+                  desc: userProfile.currentStreak >= partnerProfile.currentStreak
+                    ? `You are on a ${userProfile.currentStreak}-day active streak! You hold a ${userProfile.currentStreak - partnerProfile.currentStreak}-day advantage over ${partnerProfile.name}.`
+                    : `${partnerProfile.name} has maintained a longer streak of ${partnerProfile.currentStreak} days (${partnerProfile.currentStreak - userProfile.currentStreak} days ahead of you).`,
+                  color: "bg-amber-500/5 border-amber-500/20 text-amber-600 dark:text-amber-400",
+                  icon: "🔥"
+                },
+                {
+                  title: "Health & Vitality Balance",
+                  desc: `Your combined health score is ${userProfile.healthScore}/100 with ${userProfile.waterIntake} cups of water and ${userProfile.sleepHours}h sleep logged today, while ${partnerProfile.name} holds a ${partnerProfile.healthScore}/100 score.`,
+                  color: "bg-cyan-500/5 border-cyan-500/20 text-cyan-600 dark:text-cyan-400",
+                  icon: "💧"
+                }
               ].map((ins, i) => (
-                <Card key={i} className={`p-4 border ${ins.color} space-y-1 animate-scale-up`}>
-                  <h4 className="text-xs font-extrabold flex items-center gap-1.5 uppercase tracking-wider">
-                    <Sparkles size={13} /> {ins.title}
+                <Card key={i} className={`p-4 border ${ins.color} space-y-1.5 transition-all hover:scale-[1.01]`}>
+                  <h4 className="text-xs font-extrabold flex items-center gap-2 uppercase tracking-wider">
+                    <span>{ins.icon}</span> {ins.title}
                   </h4>
-                  <p className="text-xs leading-relaxed opacity-90">{ins.desc}</p>
+                  <p className="text-xs leading-relaxed opacity-95 font-medium">{ins.desc}</p>
                 </Card>
               ))}
             </div>
           )}
 
-          {/* TAB 3: Shared Goals list */}
+          {/* TAB 4: Shared Goals list */}
           {centerTab === "goals" && (
-            <div className="space-y-4">
+            <div className="space-y-4 animate-fadeIn">
               {[
-                { name: "Shared Reading Challenge", category: "Reading", progress: 65, reward: 200, leader: partnerProfile.name.split(" ")[0], streak: 12, deadline: "July 31, 2026" },
-                { name: "Shared Coding Challenge", category: "Coding", progress: 80, reward: 300, leader: "You", streak: 23, deadline: "July 28, 2026" },
-                { name: "Shared Workout Challenge", category: "Fitness", progress: 40, reward: 150, leader: partnerProfile.name.split(" ")[0], streak: 5, deadline: "Aug 10, 2026" },
-                { name: "Shared Hydration Challenge", category: "Hydration", progress: 90, reward: 100, leader: "Equal", streak: 8, deadline: "July 24, 2026" },
-                { name: "Shared Pomodoro", category: "Focus Study", progress: 55, reward: 250, leader: "You", streak: 15, deadline: "July 30, 2026" },
-                { name: "Shared Study Session", category: "Learning", progress: 30, reward: 180, leader: "You", streak: 6, deadline: "Aug 15, 2026" }
+                { name: "Shared Reading Challenge", category: "Reading", progress: Math.min(100, Math.round(((userProfile.habitCompletion + partnerProfile.habitCompletion) / 200) * 100)), reward: 200, leader: userProfile.habitCompletion >= partnerProfile.habitCompletion ? "You" : partnerProfile.name.split(" ")[0], streak: Math.min(userProfile.currentStreak, partnerProfile.currentStreak), deadline: "Next Sunday" },
+                { name: "Shared Coding & Dev Sprint", category: "Coding", progress: Math.min(100, Math.round(((userProfile.codingHours + partnerProfile.codingHours) / 40) * 100)), reward: 300, leader: userProfile.codingHours >= partnerProfile.codingHours ? "You" : partnerProfile.name.split(" ")[0], streak: Math.max(userProfile.currentStreak, partnerProfile.currentStreak), deadline: "End of Month" },
+                { name: "Shared Hydration Marathon", category: "Hydration", progress: Math.min(100, Math.round(((userProfile.waterIntake + partnerProfile.waterIntake) / 16) * 100)), reward: 150, leader: userProfile.waterIntake >= partnerProfile.waterIntake ? "You" : partnerProfile.name.split(" ")[0], streak: 8, deadline: "In 5 days" },
+                { name: "Deep Focus 20-Hour Milestone", category: "Focus Study", progress: Math.min(100, Math.round(((userProfile.focusHours + partnerProfile.focusHours) / 20) * 100)), reward: 250, leader: userProfile.focusHours >= partnerProfile.focusHours ? "You" : partnerProfile.name.split(" ")[0], streak: 14, deadline: "Next Friday" }
               ].map(c => (
-                <Card key={c.name} className="p-5 border-border bg-card shadow-sm space-y-3.5">
+                <Card key={c.name} className="p-5 border-border bg-card shadow-sm space-y-3.5 hover:border-primary/20 transition-all">
                   <div className="flex justify-between items-start">
                     <div>
                       <h4 className="text-xs font-bold text-foreground">{c.name}</h4>
-                      <p className="text-[10px] text-foreground/45 uppercase tracking-wider mt-0.5">{c.category} · Deadline: {c.deadline}</p>
+                      <p className="text-[10px] text-foreground/50 uppercase tracking-wider mt-0.5">{c.category} · Deadline: {c.deadline}</p>
                     </div>
-                    <span className="text-[9px] bg-primary/10 text-primary border border-primary/20 px-2 py-0.5 rounded-full font-bold">🪙 {c.reward} Coins</span>
+                    <span className="text-[10px] bg-primary/10 text-primary border border-primary/20 px-2.5 py-0.5 rounded-full font-bold">🪙 {c.reward} Coins</span>
                   </div>
 
-                  <div className="space-y-1">
-                    <div className="flex justify-between text-[10px] font-bold text-foreground/50">
-                      <span>Co-op Progress</span>
-                      <span>{c.progress}% Completed</span>
+                  <div className="space-y-1.5">
+                    <div className="flex justify-between text-[10px] font-bold text-foreground/60">
+                      <span>Co-op Combined Progress</span>
+                      <span className="text-primary font-extrabold">{c.progress}% Completed</span>
                     </div>
-                    <div className="h-2 rounded-full bg-muted overflow-hidden">
-                      <div className="h-full bg-gradient-to-r from-primary to-accent" style={{ width: `${c.progress}%` }} />
+                    <div className="h-2 rounded-full bg-muted overflow-hidden border border-border/40">
+                      <div className="h-full bg-gradient-to-r from-primary to-purple-500 transition-all" style={{ width: `${c.progress}%` }} />
                     </div>
                   </div>
 
-                  <div className="flex justify-between items-center text-[10px] text-foreground/45 font-bold pt-1">
-                    <span>Current Leader: <strong className="text-primary">{c.leader}</strong></span>
-                    <span>Shared Streak: <strong className="text-orange-500">{c.streak} Days</strong></span>
+                  <div className="flex justify-between items-center text-[10px] text-foreground/60 font-bold pt-1 border-t border-border/40">
+                    <span>Current Leader: <strong className="text-primary font-extrabold">{c.leader}</strong></span>
+                    <span>Shared Chain: <strong className="text-amber-500 font-extrabold">{c.streak} Days 🔥</strong></span>
                   </div>
                 </Card>
               ))}
             </div>
           )}
 
-          {/* TAB 4: Real-time timelines & Social features */}
+          {/* TAB 5: Real-time timelines & Accountability controls */}
           {centerTab === "feed" && (
-            <div className="space-y-5 animate-scale-up">
+            <div className="space-y-5 animate-fadeIn">
               
-              {/* Social interaction dashboard */}
-              <Card className="p-4 border-border bg-card shadow-sm space-y-4">
-                <h4 className="text-xs font-extrabold text-foreground/40 uppercase tracking-widest"> Accountability Actions</h4>
+              {/* Accountability controls dashboard */}
+              <Card className="p-5 border-border bg-card shadow-sm space-y-4">
+                <h4 className="text-xs font-extrabold text-foreground uppercase tracking-widest flex items-center gap-1.5">
+                  <Zap size={14} className="text-primary" /> Co-op Accountability Actions
+                </h4>
+                <p className="text-xs text-foreground/60">Send cheers, celebrate wins, or trigger a daily check-in with {partnerProfile.name.split(" ")[0]} to earn +25 XP!</p>
                 
-                <div className="grid grid-cols-2 gap-2 text-xs">
-                  <button onClick={() => sendSocialReaction("cheer")} className="p-2.5 border border-border hover:border-primary/20 bg-muted/40 rounded-xl transition-all font-bold text-center">
-                    Send Cheers 👍
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-2.5 text-xs">
+                  <button onClick={() => sendSocialReaction("cheer")} className="p-3 border border-border hover:border-primary bg-muted/40 hover:bg-primary/5 rounded-xl transition-all font-extrabold text-center flex flex-col items-center gap-1">
+                    <span className="text-base">💖</span> Send Cheers
                   </button>
-                  <button onClick={() => sendSocialReaction("motivation")} className="p-2.5 border border-border hover:border-primary/20 bg-muted/40 rounded-xl transition-all font-bold text-center">
-                    Send Motivation 🔥
+                  <button onClick={() => sendSocialReaction("motivation")} className="p-3 border border-border hover:border-primary bg-muted/40 hover:bg-primary/5 rounded-xl transition-all font-extrabold text-center flex flex-col items-center gap-1">
+                    <span className="text-base">🔥</span> Send Motivation
+                  </button>
+                  <button onClick={() => sendSocialReaction("celebrate")} className="p-3 border border-border hover:border-primary bg-muted/40 hover:bg-primary/5 rounded-xl transition-all font-extrabold text-center flex flex-col items-center gap-1">
+                    <span className="text-base">🎉</span> Celebrate Win
+                  </button>
+                  <button onClick={() => sendSocialReaction("checkin")} className="p-3 border border-primary/30 bg-primary/10 hover:bg-primary/20 text-primary rounded-xl transition-all font-extrabold text-center flex flex-col items-center gap-1 shadow-xs">
+                    <span className="text-base">✅</span> Daily Check-in
                   </button>
                 </div>
 
-                <div className="space-y-2 pt-2 border-t border-border/40">
-                  <p className="text-[10px] font-bold text-foreground/50 uppercase">React with Custom emoji message</p>
+                <div className="space-y-2 pt-3 border-t border-border/40">
+                  <p className="text-[11px] font-bold text-foreground/70 uppercase tracking-wider">Send Custom Reaction / Message</p>
                   <div className="flex gap-2">
                     <Input
-                      placeholder="e.g. Awesome coding streak! 💻🔥"
+                      placeholder="e.g. Awesome coding streak! Let's crush our goals today 💻🔥"
                       value={reactionMsg}
                       onChange={e => setReactionMsg(e.target.value)}
                       className="text-xs"
                     />
-                    <button onClick={() => sendSocialReaction("emoji")} className="bg-primary text-white text-xs font-bold px-3 rounded-xl hover:opacity-90 transition-all flex items-center justify-center">
-                      <Send size={12} />
+                    <button onClick={() => sendSocialReaction("emoji")} className="bg-primary text-white text-xs font-extrabold px-4 rounded-xl hover:opacity-90 transition-all flex items-center gap-1.5 shadow-sm">
+                      <Send size={13} /> React
                     </button>
                   </div>
-                </div>
-
-                <div className="pt-2 border-t border-border/40 text-center">
-                  <span className="text-[9px] text-foreground/40 font-bold uppercase tracking-wider block mb-1">Voice Study Room</span>
-                  <button onClick={() => alert("Voice Study Room is currently mock/placeholder for local testing.")} className="w-full py-2.5 rounded-xl border border-dashed border-primary/30 bg-primary/5 hover:bg-primary/10 text-primary text-xs font-bold transition-all">
-                    🎙️ Join Voice Study Room (Placeholder)
-                  </button>
                 </div>
               </Card>
 
               {/* Feed updates list */}
               <Card className="p-5 border-border bg-card shadow-sm space-y-3">
-                <h4 className="text-xs font-extrabold text-foreground/40 uppercase tracking-widest">Co-op activity Timeline</h4>
-                <div className="relative border-l border-border/40 pl-4 ml-1.5 space-y-4">
+                <h4 className="text-xs font-extrabold text-muted-foreground uppercase tracking-widest flex items-center gap-1.5">
+                  <Clock size={13} className="text-primary" /> Live Co-op Activity Timeline
+                </h4>
+                <div className="relative border-l-2 border-primary/30 pl-4 ml-1.5 space-y-4 pt-1">
                   {activities.map((act, i) => (
                     <div key={i} className="relative text-xs">
-                      <div className="absolute -left-6 top-1 w-2.5 h-2.5 rounded-full bg-primary" />
-                      <p className="font-semibold text-foreground/80 leading-relaxed">{act}</p>
-                      <p className="text-[9px] text-foreground/45 mt-0.5">Just now · Socket.io sync</p>
+                      <div className="absolute -left-[21px] top-1 w-2.5 h-2.5 rounded-full bg-primary ring-4 ring-card" />
+                      <p className="font-bold text-foreground leading-relaxed">{act}</p>
+                      <p className="text-[10px] text-muted-foreground mt-0.5">Just now · Socket.io Sync</p>
                     </div>
                   ))}
                 </div>
@@ -2814,85 +3639,88 @@ function FriendsView() {
 
         {/* RIGHT COLUMN: Connected Friend Profile Card */}
         <div className="lg:col-span-3 space-y-5">
-          <Card className="p-5 border-border bg-card shadow-sm space-y-4">
+          <Card className="p-5 border-purple-500/20 bg-card shadow-sm space-y-4 relative overflow-hidden">
             {currentPartner ? (
               <>
+                <div className="absolute top-0 right-0 w-24 h-24 bg-purple-500/5 rounded-full blur-2xl pointer-events-none" />
                 <div className="text-center pb-3 border-b border-border/40 space-y-2">
                   <div className="inline-block relative">
-                    <Avatar src={partnerProfile.avatar} name={partnerProfile.name} size="md" className="mx-auto ring-4 ring-accent/20" />
-                    <span className="absolute -bottom-1 -right-1 bg-accent text-white border border-card rounded-full text-[9px] px-1.5 font-extrabold uppercase">Partner</span>
+                    <Avatar src={partnerProfile.avatar} name={partnerProfile.name} size="md" className="mx-auto ring-4 ring-purple-500/20" />
+                    <span className="absolute -bottom-1 -right-1 bg-purple-600 text-white border border-card rounded-full text-[9px] px-2 py-0.5 font-extrabold uppercase shadow-xs">Partner</span>
                   </div>
                   <h3 className="text-sm font-extrabold text-foreground">{partnerProfile.name}</h3>
-                  <p className="text-[10px] text-foreground/45 uppercase tracking-widest font-extrabold">{partnerProfile.currentRank}</p>
+                  <p className="text-[10px] text-purple-600 dark:text-purple-400 uppercase tracking-widest font-extrabold">{partnerProfile.currentRank}</p>
                 </div>
 
                 <div className="space-y-3.5 text-xs">
                   <div className="space-y-1">
-                    <div className="flex justify-between font-bold text-[10px] text-foreground/50">
+                    <div className="flex justify-between font-bold text-[10px] text-foreground/60">
                       <span>Level {partnerProfile.level}</span>
                       <span>{partnerProfile.xp}/500 XP</span>
                     </div>
                     <div className="h-2 rounded-full bg-muted overflow-hidden">
-                      <div className="h-full bg-accent" style={{ width: `${(partnerProfile.xp / 500) * 100}%` }} />
+                      <div className="h-full bg-purple-500 transition-all" style={{ width: `${Math.min(100, (partnerProfile.xp / 500) * 100)}%` }} />
                     </div>
                   </div>
 
                   <div className="grid grid-cols-2 gap-2 text-center text-[10px] pt-1">
-                    <div className="p-2 bg-accent/5 rounded-xl border border-accent/10">
-                      <p className="text-foreground/45 font-bold">Streak</p>
-                      <p className="text-sm font-extrabold text-orange-500 flex justify-center items-center gap-0.5"><Flame size={12} /> {partnerProfile.currentStreak}</p>
+                    <div className="p-2 bg-purple-500/10 rounded-xl border border-purple-500/20">
+                      <p className="text-foreground/60 font-bold">Active Streak</p>
+                      <p className="text-sm font-extrabold text-amber-600 dark:text-amber-400 flex justify-center items-center gap-1 mt-0.5">
+                        <Flame size={13} className="fill-amber-500" /> {partnerProfile.currentStreak}d
+                      </p>
                     </div>
-                    <div className="p-2 bg-muted/40 rounded-xl border border-border/20">
-                      <p className="text-foreground/45 font-bold">Longest</p>
-                      <p className="text-sm font-extrabold text-foreground">{partnerProfile.longestStreak}</p>
+                    <div className="p-2 bg-muted rounded-xl border border-border/50">
+                      <p className="text-foreground/60 font-bold">Longest</p>
+                      <p className="text-sm font-extrabold text-foreground mt-0.5">{partnerProfile.longestStreak}d</p>
                     </div>
                   </div>
 
                   {/* Development metrics list */}
-                  <div className="divide-y divide-border/20 space-y-2.5 pt-2">
-                    <div className="flex justify-between items-center text-[10px] font-bold text-foreground/60 pt-2.5">
-                      <span>Health Score</span><span className="text-primary">{partnerProfile.healthScore}/100</span>
+                  <div className="divide-y divide-border/20 space-y-2 pt-2">
+                    <div className="flex justify-between items-center text-[11px] font-bold text-foreground/75 pt-2">
+                      <span>Health Score</span><span className="text-primary font-extrabold">{partnerProfile.healthScore}/100</span>
                     </div>
-                    <div className="flex justify-between items-center text-[10px] font-bold text-foreground/60 pt-2.5">
-                      <span>Career Score</span><span className="text-accent">{partnerProfile.careerScore}/100</span>
+                    <div className="flex justify-between items-center text-[11px] font-bold text-foreground/75 pt-2">
+                      <span>Career Score</span><span className="text-purple-600 dark:text-purple-400 font-extrabold">{partnerProfile.careerScore}/100</span>
                     </div>
-                    <div className="flex justify-between items-center text-[10px] font-bold text-foreground/60 pt-2.5">
-                      <span>Productivity Score</span><span className="text-primary">{partnerProfile.productivityScore}/100</span>
+                    <div className="flex justify-between items-center text-[11px] font-bold text-foreground/75 pt-2">
+                      <span>Productivity Score</span><span className="text-primary font-extrabold">{partnerProfile.productivityScore}/100</span>
                     </div>
-                    <div className="flex justify-between items-center text-[10px] font-bold text-foreground/60 pt-2.5">
-                      <span>Weekly Goals</span><span>{partnerProfile.weeklyGoalsDone}/{partnerProfile.weeklyGoalsTotal} done</span>
+                    <div className="flex justify-between items-center text-[11px] font-bold text-foreground/75 pt-2">
+                      <span>Weekly Tasks</span><span>{partnerProfile.weeklyGoalsDone}/{partnerProfile.weeklyGoalsTotal} done</span>
                     </div>
-                    <div className="flex justify-between items-center text-[10px] font-bold text-foreground/60 pt-2.5">
-                      <span>Monthly Goals</span><span>{partnerProfile.monthlyGoalsDone}/{partnerProfile.monthlyGoalsTotal} done</span>
+                    <div className="flex justify-between items-center text-[11px] font-bold text-foreground/75 pt-2">
+                      <span>Habits Done</span><span className="text-primary font-extrabold">{partnerProfile.habitCompletion}%</span>
                     </div>
-                    <div className="flex justify-between items-center text-[10px] font-bold text-foreground/60 pt-2.5">
-                      <span>Habit Completion</span><span className="text-primary">{partnerProfile.habitCompletion}%</span>
-                    </div>
-                    <div className="flex justify-between items-center text-[10px] font-bold text-foreground/60 pt-2.5">
+                    <div className="flex justify-between items-center text-[11px] font-bold text-foreground/75 pt-2">
                       <span>Focus Hours</span><span>{partnerProfile.focusHours}h</span>
                     </div>
-                    <div className="flex justify-between items-center text-[10px] font-bold text-foreground/60 pt-2.5">
+                    <div className="flex justify-between items-center text-[11px] font-bold text-foreground/75 pt-2">
                       <span>Study Hours</span><span>{partnerProfile.studyHours}h</span>
                     </div>
-                    <div className="flex justify-between items-center text-[10px] font-bold text-foreground/60 pt-2.5">
+                    <div className="flex justify-between items-center text-[11px] font-bold text-foreground/75 pt-2">
                       <span>Coding Hours</span><span>{partnerProfile.codingHours}h</span>
                     </div>
-                    <div className="flex justify-between items-center text-[10px] font-bold text-foreground/60 pt-2.5">
+                    <div className="flex justify-between items-center text-[11px] font-bold text-foreground/75 pt-2">
                       <span>Water / Sleep</span><span>{partnerProfile.waterIntake}c / {partnerProfile.sleepHours}h</span>
                     </div>
-                    <div className="flex justify-between items-center text-[10px] font-bold text-foreground/60 pt-2.5">
-                      <span>Current Challenge</span><span className="truncate max-w-[120px]">{partnerProfile.currentChallenge}</span>
+                    <div className="flex justify-between items-center text-[11px] font-bold text-foreground/75 pt-2">
+                      <span>Exercise / Mood</span><span>{partnerProfile.exercise}m / {partnerProfile.mood}</span>
                     </div>
-                    <div className="flex justify-between items-center text-[10px] font-bold text-foreground/60 pt-2.5">
-                      <span>Completed / Pending</span><span>{partnerProfile.completedTasks} / {partnerProfile.pendingTasks}</span>
+                    <div className="flex justify-between items-center text-[11px] font-bold text-foreground/75 pt-2">
+                      <span>Completed / Pending</span><span className="font-extrabold text-purple-600 dark:text-purple-400">{partnerProfile.completedTasks} / {partnerProfile.pendingTasks}</span>
                     </div>
                   </div>
                 </div>
               </>
             ) : (
-              <div className="flex flex-col items-center justify-center py-16 text-center text-foreground/35 space-y-3">
-                <Users size={36} className="text-foreground/20" />
-                <p className="text-xs">No partner connected.</p>
+              <div className="flex flex-col items-center justify-center py-20 text-center text-muted-foreground space-y-3">
+                <Users size={40} className="text-primary/40 animate-pulse" />
+                <div>
+                  <p className="text-sm font-extrabold text-foreground">No Partner Connected</p>
+                  <p className="text-xs text-foreground/50 mt-1">Connect with a friend's unique invite code below to view live comparison stats!</p>
+                </div>
               </div>
             )}
           </Card>
@@ -2900,53 +3728,65 @@ function FriendsView() {
 
       </div>
 
-      {/* FOOTER SECTION: Connect code trigger */}
-      <Card className="p-5 border-border shadow-sm bg-card">
-        <h3 className="text-sm font-extrabold font-['Plus_Jakarta_Sans'] mb-2">Invite and Grow Together</h3>
-        <p className="text-foreground/45 text-xs mb-4">Connect with friend's invite codes to compare progress splits, streaks, study sessions and build habits together.</p>
+      {/* FOOTER SECTION: Connect code trigger & Server Validation */}
+      <Card className="p-6 border-border shadow-md bg-card space-y-4">
+        <div className="flex items-center gap-2.5">
+          <Award size={20} className="text-primary" />
+          <div>
+            <h3 className="text-base font-extrabold tracking-tight">Invite Code & Growth Partner Hub</h3>
+            <p className="text-foreground/50 text-xs">Connect using real, unique server-generated invite codes to compare daily habits, study hours, and streaks.</p>
+          </div>
+        </div>
         
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-2 border-t border-border/40">
-          <div className="space-y-3">
-            <p className="text-xs font-bold text-foreground/65">Your Invite Code</p>
-            <div className="flex items-center gap-2 bg-muted rounded-xl px-4 py-2.5 border border-border">
-              <span className="text-foreground font-extrabold text-sm font-['JetBrains_Mono'] flex-1 tracking-widest">{user.inviteCode}</span>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-3 border-t border-border/60">
+          <div className="space-y-3 bg-muted/40 p-4 rounded-2xl border border-border/50">
+            <div className="flex items-center justify-between">
+              <p className="text-xs font-extrabold text-foreground uppercase tracking-wider">Your Unique Server Code</p>
+              <span className="text-[10px] bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-bold px-2 py-0.5 rounded-full">Server Verified</span>
+            </div>
+            <div className="flex items-center gap-2 bg-card rounded-xl px-4 py-3 border border-border shadow-inner">
+              <span className="text-foreground font-extrabold text-base font-['JetBrains_Mono'] flex-1 tracking-widest">{user.inviteCode || "SERVER-OFFLINE"}</span>
               <button
                 onClick={copyCode}
-                className={`text-xs px-3 py-1.5 rounded-lg font-bold transition-all border ${
+                className={`text-xs px-4 py-2 rounded-xl font-extrabold transition-all border ${
                   copied
-                    ? "bg-emerald-500/10 text-emerald-500 border-emerald-500/20"
-                    : "bg-primary/10 text-primary hover:bg-primary/20 border-transparent"
+                    ? "bg-emerald-500 text-white border-transparent shadow-xs"
+                    : "bg-primary text-white hover:bg-primary/90 border-transparent shadow-xs"
                 }`}
               >
-                {copied ? "Copied!" : "Copy Code"}
+                {copied ? "✓ Copied!" : "Copy Code"}
               </button>
             </div>
+            <p className="text-[11px] text-muted-foreground font-medium">Share this exact 8-character code with your accountability partner.</p>
           </div>
 
-          <div className="space-y-3">
-            <p className="text-xs font-bold text-foreground/65">Connect Friend</p>
-            <div className="flex gap-2">
+          <div className="space-y-3 bg-muted/40 p-4 rounded-2xl border border-border/50">
+            <div className="flex items-center justify-between">
+              <p className="text-xs font-extrabold text-foreground uppercase tracking-wider">Connect Growth Friend</p>
+              <span className="text-[10px] bg-primary/10 text-primary font-bold px-2 py-0.5 rounded-full">100% Real Validation</span>
+            </div>
+            <div className="flex gap-2.5">
               <Input
-                placeholder="Enter your friend's invite code"
+                placeholder="Enter friend's invite code (e.g. A3F9B2D1)"
                 value={inviteCode}
                 onChange={e => setInviteCode(e.target.value.toUpperCase())}
-                className="font-['JetBrains_Mono'] tracking-widest text-xs"
+                className="font-['JetBrains_Mono'] tracking-widest text-sm py-2.5 bg-card"
               />
               <button
                 onClick={tryInvite}
-                disabled={inviteCode.length < 6}
-                className="bg-primary text-white px-4 rounded-xl text-xs font-bold transition-all disabled:opacity-40"
+                disabled={!inviteCode.trim() || inviteMsg?.msg === "Connecting with server..."}
+                className="bg-primary text-white px-5 rounded-xl text-xs font-extrabold transition-all hover:opacity-90 disabled:opacity-40 shadow-sm flex items-center gap-1.5"
               >
-                Connect
+                <Users size={14} /> Connect
               </button>
             </div>
             {inviteMsg && (
-              <p className={`text-xs ${inviteMsg.ok ? "text-emerald-500" : "text-[#ca5353]"} font-semibold mt-1`}>
+              <p className={`text-xs ${inviteMsg.ok ? "text-emerald-600 dark:text-emerald-400" : "text-red-500"} font-extrabold mt-1`}>
                 {inviteMsg.msg}
               </p>
             )}
-            <p className="text-[10px] text-foreground/40 font-medium">
-              Share your code above with a friend, then enter their code here to connect.
+            <p className="text-[11px] text-muted-foreground font-medium">
+              We validate all invite codes directly against the MongoDB server. Demo fallbacks have been removed.
             </p>
           </div>
         </div>
@@ -3088,90 +3928,196 @@ function ProfileView({ onNavigate }: { onNavigate: (v: View) => void }) {
    REMAINING VIEWS (condensed)
 ══════════════════════════════════════════ */
 function HabitsView() {
-  const { habits, addHabit, updateHabit, deleteHabit } = useAuth();
-  const [filter, setFilter] = useState("All");
+  const { habits, addHabit, updateHabit, deleteHabit, growthPlans, activePlanId } = useAuth();
+  const [filterCat, setFilterCat] = useState("All");
+  const [filterStatus, setFilterStatus] = useState<"active" | "paused" | "archived">("active");
   const [showAdd, setShowAdd] = useState(false);
   const [newName, setNewName] = useState("");
   const [newCat, setNewCat] = useState("Fitness");
+  const [newFreq, setNewFreq] = useState("Daily");
+  const [newPriority, setNewPriority] = useState<"high" | "medium" | "low">("medium");
+
+  const activePlan = growthPlans.find(p => p.id === activePlanId) || null;
   const cats = ["All", "Fitness", "Reading", "Hydration", "Career", "Mental Health", "Sleep"];
-  const filtered = filter === "All" ? habits : habits.filter(h => h.category === filter);
+
+  // Filtered habits
+  const filtered = habits.filter(h => {
+    // Status filter
+    if (filterStatus === "paused" && !h.paused) return false;
+    if (filterStatus === "archived" && !h.archived) return false;
+    if (filterStatus === "active" && (h.paused || h.archived)) return false;
+    // Category filter
+    if (filterCat !== "All" && h.category !== filterCat) return false;
+    return true;
+  });
 
   const handleAddHabit = () => {
     if (!newName.trim()) return;
+    const todayStr = new Date().toISOString().split("T")[0];
     addHabit({
       name: newName,
       category: newCat,
       icon: newCat === "Fitness" ? "🏃" : newCat === "Reading" ? "📚" : newCat === "Hydration" ? "💧" : newCat === "Career" ? "💻" : newCat === "Sleep" ? "🌙" : "🧘",
-      priority: "medium",
-      freq: "Daily",
+      priority: newPriority,
+      freq: newFreq,
       target: "1 time",
+      streak: 1,
+      longestStreak: 1,
+      completedToday: true,
+      consistencyScore: 85,
+      history: [todayStr],
+      paused: false,
+      archived: false,
+      planId: activePlanId || ""
     });
     setNewName("");
     setShowAdd(false);
   };
 
+  const handleToggleHistory = (habit: Habit, dateStr: string) => {
+    const currentHist = habit.history || [];
+    const exists = currentHist.includes(dateStr);
+    const nextHist = exists ? currentHist.filter(d => d !== dateStr) : [...currentHist, dateStr];
+    
+    // Recalculate streak & consistency score
+    const todayStr = new Date().toISOString().split("T")[0];
+    const completedToday = nextHist.includes(todayStr);
+    const streak = nextHist.length;
+    const longestStreak = Math.max(habit.longestStreak || 0, streak);
+    const consistencyScore = Math.min(100, Math.round((nextHist.length / 28) * 100));
+
+    updateHabit(habit.id, {
+      history: nextHist,
+      completedToday,
+      streak,
+      longestStreak,
+      consistencyScore
+    });
+  };
+
+  // Generate the past 28 days for our interactive heatmap
+  const past28Days = useMemo(() => {
+    const days: string[] = [];
+    const today = new Date();
+    for (let i = 27; i >= 0; i--) {
+      const d = new Date(today);
+      d.setDate(today.getDate() - i);
+      days.push(d.toISOString().split("T")[0]);
+    }
+    return days;
+  }, []);
+
   // Streaks chart data
-  const chartData = habits.map(h => ({ name: h.name, streak: h.streak }));
+  const chartData = habits.filter(h => !h.archived).map(h => ({ name: h.name, streak: h.streak, longest: h.longestStreak || h.streak }));
 
   return (
-    <div className="p-7 space-y-6">
-      {/* Subheader from Mockup */}
-      <div className="flex justify-between items-center border-b border-border pb-3">
+    <div className="p-7 space-y-6 font-['Plus_Jakarta_Sans'] text-foreground">
+      
+      {/* Subheader and Action buttons */}
+      <div className="flex justify-between items-center border-b border-border pb-4 flex-wrap gap-4">
         <div>
-          <h2 className="text-lg font-extrabold font-['Plus_Jakarta_Sans']">Habit progress</h2>
-          <p className="text-foreground/40 text-xs mt-0.5">Visualize your habits streak and progress</p>
+          <div className="flex items-center gap-2">
+            <h2 className="text-xl font-extrabold tracking-tight">Habit Heatmaps & Systems</h2>
+            {activePlan && (
+              <span className="text-[10px] font-extrabold bg-primary/10 text-primary border border-primary/20 px-2.5 py-0.5 rounded-full">
+                Plan: {activePlan.title}
+              </span>
+            )}
+          </div>
+          <p className="text-foreground/50 text-xs mt-0.5">Track consistency, analyze 28-day heatmaps, and manage habit lifecycles</p>
         </div>
-        <button
-          onClick={() => setShowAdd(true)}
-          className="bg-primary hover:opacity-90 text-white px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 shadow-sm"
-        >
-          <Plus size={14} /> New +
-        </button>
+        
+        <div className="flex items-center gap-3">
+          {/* Status Switcher Tabs */}
+          <div className="flex bg-muted rounded-xl p-1 gap-1 border border-border">
+            <button
+              onClick={() => setFilterStatus("active")}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                filterStatus === "active" ? "bg-card text-primary shadow-xs font-extrabold" : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              ⚡ Active ({habits.filter(h => !h.paused && !h.archived).length})
+            </button>
+            <button
+              onClick={() => setFilterStatus("paused")}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                filterStatus === "paused" ? "bg-card text-primary shadow-xs font-extrabold" : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              ⏸️ Paused ({habits.filter(h => h.paused).length})
+            </button>
+            <button
+              onClick={() => setFilterStatus("archived")}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                filterStatus === "archived" ? "bg-card text-primary shadow-xs font-extrabold" : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              📦 Archived ({habits.filter(h => h.archived).length})
+            </button>
+          </div>
+
+          <button
+            onClick={() => setShowAdd(true)}
+            className="bg-primary hover:bg-primary/90 text-white px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 shadow-sm"
+          >
+            <Plus size={14} /> New Habit +
+          </button>
+        </div>
       </div>
 
-      {/* Progress Chart with All Habit (Mockup Feature) */}
-      <Card className="p-5 border-border shadow-sm bg-card">
-        <h3 className="text-xs font-extrabold text-foreground/40 uppercase tracking-widest mb-4">Progress chart with all habit</h3>
-        <ResponsiveContainer width="100%" height={220}>
-          <BarChart data={chartData} barCategoryGap="25%">
-            <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
-            <XAxis dataKey="name" tick={{ fill: "var(--muted-foreground)", fontSize: 10 }} axisLine={false} tickLine={false} />
-            <YAxis tick={{ fill: "var(--muted-foreground)", fontSize: 10 }} label={{ value: 'Streak (Days)', angle: -90, position: 'insideLeft', fill: 'var(--muted-foreground)', fontSize: 11 }} axisLine={false} />
-            <Tooltip contentStyle={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: 12, fontSize: 12 }} />
-            <Bar dataKey="streak" fill="#5B3765" radius={[6, 6, 0, 0]} maxBarSize={40} name="Streak (Days)">
-              {chartData.map((entry, index) => (
-                <Cell key={`cell-${index}`} fill={index % 2 === 0 ? "#5B3765" : "#BA88AE"} />
-              ))}
-            </Bar>
-          </BarChart>
-        </ResponsiveContainer>
-      </Card>
+      {/* Progress Chart with All Habits */}
+      {chartData.length > 0 && (
+        <Card className="p-5 border-border shadow-sm bg-card space-y-3">
+          <div className="flex items-center justify-between">
+            <h3 className="text-xs font-extrabold text-muted-foreground uppercase tracking-widest flex items-center gap-1.5">
+              <BarChart2 size={14} className="text-primary" /> Multi-Habit Streak & Longest Benchmark
+            </h3>
+            <span className="text-[11px] text-foreground/50 font-bold">Past 30 Days Trend</span>
+          </div>
+          <ResponsiveContainer width="100%" height={210}>
+            <BarChart data={chartData} barCategoryGap="25%">
+              <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
+              <XAxis dataKey="name" tick={{ fill: "var(--muted-foreground)", fontSize: 10 }} axisLine={false} tickLine={false} />
+              <YAxis tick={{ fill: "var(--muted-foreground)", fontSize: 10 }} label={{ value: 'Days', angle: -90, position: 'insideLeft', fill: 'var(--muted-foreground)', fontSize: 11 }} axisLine={false} />
+              <Tooltip contentStyle={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: 12, fontSize: 12 }} />
+              <Bar dataKey="streak" fill="#5c7c64" radius={[6, 6, 0, 0]} maxBarSize={36} name="Current Streak" />
+              <Bar dataKey="longest" fill="#BA88AE" radius={[6, 6, 0, 0]} maxBarSize={36} name="Longest Streak" />
+            </BarChart>
+          </ResponsiveContainer>
+        </Card>
+      )}
 
-      {/* Filter tab row */}
-      <div className="flex gap-2 flex-wrap">
-        {cats.map(c => (
-          <button
-            key={c}
-            onClick={() => setFilter(c)}
-            className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all border ${
-              filter === c
-                ? "bg-primary/10 text-primary border-primary/20"
-                : "bg-muted text-foreground/50 border-border hover:text-foreground/75"
-            }`}
-          >
-            {c}
-          </button>
-        ))}
+      {/* Category filter pills */}
+      <div className="flex gap-2 flex-wrap items-center justify-between">
+        <div className="flex gap-2 flex-wrap">
+          {cats.map(c => (
+            <button
+              key={c}
+              onClick={() => setFilterCat(c)}
+              className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all border ${
+                filterCat === c
+                  ? "bg-primary/15 text-primary border-primary/30 font-extrabold"
+                  : "bg-muted text-foreground/60 border-border hover:text-foreground"
+              }`}
+            >
+              {c}
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* Add Habit panel */}
       {showAdd && (
-        <Card className="p-5 border-primary/20 bg-card shadow-sm">
-          <h3 className="text-sm font-extrabold font-['Plus_Jakarta_Sans'] mb-4">Add New Habit</h3>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-            <Input label="Habit Name" placeholder="e.g. Morning Stretch" value={newName} onChange={e => setNewName(e.target.value)} />
+        <Card className="p-5 border-primary/30 bg-card shadow-md animate-fadeIn">
+          <h3 className="text-sm font-extrabold mb-4 text-primary flex items-center gap-2">
+            <PlusCircle size={16} /> Add System Habit
+          </h3>
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
+            <div className="md:col-span-2">
+              <Input label="Habit Name" placeholder="e.g. 30m Deep Code Review" value={newName} onChange={e => setNewName(e.target.value)} />
+            </div>
             <div>
-              <label className="block text-foreground/50 text-xs mb-1.5 font-bold">Category</label>
+              <label className="block text-foreground/60 text-xs mb-1.5 font-bold">Category</label>
               <select
                 value={newCat}
                 onChange={e => setNewCat(e.target.value)}
@@ -3180,55 +4126,148 @@ function HabitsView() {
                 {cats.slice(1).map(c => <option key={c} value={c}>{c}</option>)}
               </select>
             </div>
+            <div>
+              <label className="block text-foreground/60 text-xs mb-1.5 font-bold">Priority</label>
+              <select
+                value={newPriority}
+                onChange={e => setNewPriority(e.target.value as any)}
+                className="w-full bg-input border border-border rounded-xl px-3 py-2.5 text-foreground text-sm outline-none focus:border-primary"
+              >
+                <option value="high">High 🔥</option><option value="medium">Medium ⚡</option><option value="low">Low ☕</option>
+              </select>
+            </div>
           </div>
-          <div className="flex gap-3">
-            <Btn onClick={handleAddHabit}>Add Habit</Btn>
+          <div className="flex gap-3 pt-2 border-t border-border/40">
+            <Btn onClick={handleAddHabit} variant="primary">Add Habit</Btn>
             <Btn variant="ghost" onClick={() => setShowAdd(false)}>Cancel</Btn>
           </div>
         </Card>
       )}
 
-      {/* Habits Grid list */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {filtered.map(h => (
-          <Card key={h.id} className={`p-4 transition-all hover:border-primary/20 ${h.completedToday ? "border-primary/20 bg-primary/5" : "border-border bg-card"}`}>
-            <div className="flex items-start justify-between mb-3">
-              <div className="flex items-center gap-3">
-                <span className="text-2xl filter drop-shadow-sm">{h.icon}</span>
-                <div>
-                  <h4 className="text-foreground font-bold text-sm">{h.name}</h4>
-                  <div className="flex items-center gap-2 mt-0.5">
-                    <span className="text-foreground/40 text-xs font-semibold">{h.category}</span>
-                    <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-bold border uppercase ${priorityColor[h.priority] || ""}`}>
-                      {h.priority}
-                    </span>
-                  </div>
-                </div>
-              </div>
-              <button
-                onClick={() => deleteHabit(h.id)}
-                className="w-7 h-7 rounded-lg bg-muted flex items-center justify-center text-foreground/35 hover:text-red-500 hover:bg-red-500/5 transition-all"
-              >
-                <Trash2 size={12} />
-              </button>
-            </div>
-            <div className="flex items-center justify-between mt-4 border-t border-border/40 pt-3">
-              <span className="text-orange-600 dark:text-orange-400 text-xs font-bold flex items-center gap-1">
-                <Flame size={12} /> {h.streak} days streak
-              </span>
-              <button
-                onClick={() => updateHabit(h.id, { completedToday: !h.completedToday })}
-                className={`flex items-center gap-1 px-3 py-1.5 rounded-xl text-xs font-extrabold transition-all border ${
-                  h.completedToday
-                    ? "bg-primary/10 text-primary border-primary/20"
-                    : "bg-muted text-foreground/50 border-border hover:border-primary/20"
+      {/* Habits Grid List with Heatmaps & Badges */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+        {filtered.length === 0 ? (
+          <Card className="md:col-span-2 p-10 text-center text-muted-foreground">
+            <p>No habits found in the <span className="font-extrabold text-foreground">{filterStatus}</span> view. Create a habit or switch tabs!</p>
+          </Card>
+        ) : (
+          filtered.map(h => {
+            const hist = h.history || [];
+            const longest = Math.max(h.streak || 0, h.longestStreak || h.streak || 0);
+            const score = h.consistencyScore ?? Math.min(100, Math.round(((h.streak || 1) / ((h.streak || 1) + 3)) * 100));
+            return (
+              <Card
+                key={h.id}
+                className={`p-5 transition-all space-y-4 ${
+                  h.archived ? "border-border/30 bg-muted/10 opacity-60" : h.paused ? "border-amber-500/30 bg-amber-500/5" : h.completedToday ? "border-primary/30 bg-primary/5 shadow-sm" : "border-border bg-card shadow-sm hover:border-primary/20"
                 }`}
               >
-                {h.completedToday ? <><CheckCircle2 size={12} /> Done</> : <><Circle size={12} /> Mark Done</>}
-              </button>
-            </div>
-          </Card>
-        ))}
+                {/* Header & Badges */}
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex items-center gap-3.5 min-w-0">
+                    <div className="w-11 h-11 rounded-2xl bg-card border border-border flex items-center justify-center text-2xl shadow-xs flex-shrink-0">
+                      {h.icon || "✨"}
+                    </div>
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <h4 className={`font-extrabold text-sm truncate ${h.archived ? "line-through text-muted-foreground" : "text-foreground"}`}>{h.name}</h4>
+                        {h.paused && <span className="text-[9px] bg-amber-500/20 text-amber-500 font-extrabold px-2 py-0.5 rounded-full border border-amber-500/30">⏸️ Paused</span>}
+                        {h.archived && <span className="text-[9px] bg-muted text-muted-foreground font-extrabold px-2 py-0.5 rounded-full border border-border">📦 Archived</span>}
+                      </div>
+                      <div className="flex items-center gap-2 mt-1 flex-wrap">
+                        <span className="text-muted-foreground text-xs font-semibold">{h.category}</span>
+                        <span className={`text-[9px] px-1.5 py-0.5 rounded font-bold border uppercase ${priorityColor[h.priority] || ""}`}>
+                          {h.priority}
+                        </span>
+                        <span className="text-[9px] bg-primary/10 text-primary font-bold px-2 py-0.5 rounded-full flex items-center gap-1">
+                          <Award size={10} /> Longest: {longest}d
+                        </span>
+                        <span className="text-[9px] bg-purple-500/10 text-purple-600 dark:text-purple-400 font-bold px-2 py-0.5 rounded-full">
+                          🎯 {score}% Consistency
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Lifecycle Controls */}
+                  <div className="flex items-center gap-1 flex-shrink-0">
+                    <button
+                      onClick={() => updateHabit(h.id, { paused: !h.paused, archived: false })}
+                      title={h.paused ? "Resume Habit" : "Pause Habit"}
+                      className={`w-7 h-7 rounded-lg flex items-center justify-center transition-all ${h.paused ? "bg-amber-500 text-white font-bold" : "bg-muted text-muted-foreground hover:text-amber-500 hover:bg-amber-500/10"}`}
+                    >
+                      {h.paused ? <Zap size={13} /> : <Pause size={13} />}
+                    </button>
+                    <button
+                      onClick={() => updateHabit(h.id, { archived: !h.archived, paused: false })}
+                      title={h.archived ? "Unarchive Habit" : "Archive Habit"}
+                      className={`w-7 h-7 rounded-lg flex items-center justify-center transition-all ${h.archived ? "bg-primary text-white font-bold" : "bg-muted text-muted-foreground hover:text-primary hover:bg-primary/10"}`}
+                    >
+                      <Archive size={13} />
+                    </button>
+                    <button
+                      onClick={() => deleteHabit(h.id)}
+                      title="Delete Habit"
+                      className="w-7 h-7 rounded-lg bg-muted flex items-center justify-center text-muted-foreground hover:text-red-500 hover:bg-red-500/10 transition-all"
+                    >
+                      <Trash2 size={13} />
+                    </button>
+                  </div>
+                </div>
+
+                {/* 28-Day Heatmap Grid */}
+                <div className="space-y-1.5 pt-2 border-t border-border/40">
+                  <div className="flex items-center justify-between text-[10px] text-muted-foreground font-bold">
+                    <span>28-Day Completion Heatmap (Click block to toggle)</span>
+                    <span>Past 4 Weeks → Today</span>
+                  </div>
+                  <div className="grid grid-cols-14 gap-1.5 p-2 bg-muted/30 rounded-xl border border-border/40">
+                    {past28Days.map((dStr, idx) => {
+                      const isDone = hist.includes(dStr);
+                      const isToday = idx === 27;
+                      return (
+                        <button
+                          key={dStr}
+                          onClick={() => !h.archived && handleToggleHistory(h, dStr)}
+                          title={`${dStr}: ${isDone ? "Completed ✅" : "Missed / Pending"}`}
+                          disabled={h.archived}
+                          className={`h-5 rounded-md transition-all relative flex items-center justify-center text-[8px] font-extrabold ${
+                            isDone
+                              ? "bg-primary text-white shadow-xs scale-100"
+                              : "bg-card border border-border/80 text-foreground/30 hover:border-primary/50"
+                          } ${isToday ? "ring-2 ring-primary ring-offset-1 ring-offset-background" : ""}`}
+                        >
+                          {isToday ? "T" : ""}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Streak Counter & Mark Done Button */}
+                <div className="flex items-center justify-between pt-1">
+                  <span className="text-amber-600 dark:text-amber-400 text-xs font-extrabold flex items-center gap-1.5">
+                    <Flame size={14} className="fill-amber-500" /> {h.streak} days active streak
+                  </span>
+                  <button
+                    onClick={() => {
+                      const todayStr = new Date().toISOString().split("T")[0];
+                      handleToggleHistory(h, todayStr);
+                    }}
+                    disabled={h.archived}
+                    className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-extrabold transition-all border ${
+                      h.completedToday
+                        ? "bg-primary text-white border-transparent shadow-xs"
+                        : "bg-card text-foreground border-border hover:border-primary hover:text-primary"
+                    } ${h.archived ? "opacity-40 cursor-not-allowed" : ""}`}
+                  >
+                    {h.completedToday ? <><CheckCircle2 size={13} /> Completed Today</> : <><Circle size={13} /> Mark Done</>}
+                  </button>
+                </div>
+              </Card>
+            );
+          })
+        )}
       </div>
     </div>
   );
@@ -3811,96 +4850,620 @@ function LearningView() {
 }
 
 function JournalView() {
-  const { journals, addJournal } = useAuth();
+  const { journals, addJournal, updateJournal, deleteJournal, notes, addNote, updateNote, deleteNote, growthPlans, activePlanId } = useAuth();
+  
+  // Tab and Folder state
+  const [subTab, setSubTab] = useState<"reflections" | "notes">("reflections");
+  const [activeFolder, setActiveFolder] = useState<string>("all");
+  const [customFolders, setCustomFolders] = useState<string[]>(() => {
+    try { return JSON.parse(localStorage.getItem("gs_custom_folders") || '["Learning & Tech", "Career Ideas", "Personal Growth", "Daily Reflections"]'); }
+    catch { return ["Learning & Tech", "Career Ideas", "Personal Growth", "Daily Reflections"]; }
+  });
+  const [newFolderName, setNewFolderName] = useState("");
+  const [showAddFolder, setShowAddFolder] = useState(false);
+
+  // Search and Filtering state
+  const [searchQuery, setSearchQuery] = useState("");
+  const [onlyPinned, setOnlyPinned] = useState(false);
+  const [planFilter, setPlanFilter] = useState<string>("all");
+
+  // New Reflection Form state
   const [mood, setMood] = useState("😄");
   const [wins, setWins] = useState("");
   const [challenges, setChallenges] = useState("");
   const [gratitude, setGratitude] = useState("");
   const [lessons, setLessons] = useState("");
+  const [refFolder, setRefFolder] = useState("Daily Reflections");
+  const [refPlanId, setRefPlanId] = useState(activePlanId || "");
+  const [refTags, setRefTags] = useState("");
+
+  // New Note Form state
+  const [noteTitle, setNoteTitle] = useState("");
+  const [noteBody, setNoteBody] = useState("");
+  const [noteColor, setNoteColor] = useState("text-primary bg-primary/10");
+  const [noteFolder, setNoteFolder] = useState("Learning & Tech");
+  const [notePlanId, setNotePlanId] = useState(activePlanId || "");
+  const [noteTags, setNoteTags] = useState("");
+  const [showNoteForm, setShowNoteForm] = useState(false);
+  const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
+
+  const persistFolders = (folders: string[]) => {
+    setCustomFolders(folders);
+    localStorage.setItem("gs_custom_folders", JSON.stringify(folders));
+  };
+
+  const handleCreateFolder = () => {
+    if (!newFolderName.trim() || customFolders.includes(newFolderName.trim())) return;
+    const next = [...customFolders, newFolderName.trim()];
+    persistFolders(next);
+    setNewFolderName("");
+    setShowAddFolder(false);
+    setActiveFolder(next[next.length - 1]);
+  };
 
   const applyPrompt = (type: string) => {
     if (type === "evening") {
-      setWins("• Maintained focus on my custom goal tasks today.\n• Drank water and stayed active throughout the day.");
-      setChallenges("• Procrastinated slightly during after-lunch deep work block.");
-      setGratitude("• Grateful for clear mental focus and having a supportive growth plan.");
+      setWins("• Maintained focus on my custom growth plan tasks today.\n• Drank water and completed active movement block.");
+      setChallenges("• Procrastinated slightly during afternoon deep work block.");
+      setGratitude("• Grateful for mental clarity and structured accountability tools.");
       setLessons("• Break large intimidating tasks into 15-minute micro steps right away.");
+      setRefFolder("Daily Reflections");
     } else if (type === "gratitude") {
-      setGratitude("1. Health and daily physical vitality.\n2. Access to unlimited self-learning resources.\n3. The opportunity to build better long-term habits.");
-      setWins("Taking intentional action toward my self improvement plan.");
+      setGratitude("1. Physical vitality and good health.\n2. Access to top self-learning resources.\n3. Consistent progress toward my long-term goals.");
+      setWins("Taking intentional daily action toward my personal vision.");
+      setRefFolder("Personal Growth");
     } else if (type === "weekly") {
       setWins("• Completed key study roadmap milestones.\n• Checked off daily habits consistently all week.");
       setChallenges("• Need more structured wind-down time before bed.");
-      setLessons("• Small daily habits compound into massive weekly wins.");
+      setLessons("• Small daily habits compound into massive weekly wins over time.");
+      setRefFolder("Personal Growth");
     }
   };
 
   const handleAddJournal = () => {
     if (!wins.trim() && !challenges.trim() && !gratitude.trim() && !lessons.trim()) return;
-    addJournal({ mood, wins, challenges, gratitude, lessons });
-    setWins(""); setChallenges(""); setGratitude(""); setLessons("");
+    const tagsArr = refTags.split(",").map(t => t.trim()).filter(Boolean);
+    addJournal({
+      mood,
+      wins,
+      challenges,
+      gratitude,
+      lessons,
+      folder: refFolder,
+      planId: refPlanId || activePlanId || undefined,
+      tags: tagsArr,
+      pinned: false
+    });
+    setWins(""); setChallenges(""); setGratitude(""); setLessons(""); setRefTags("");
   };
 
+  const handleSaveNote = () => {
+    if (!noteTitle.trim() && !noteBody.trim()) return;
+    const tagsArr = noteTags.split(",").map(t => t.trim()).filter(Boolean);
+    if (editingNoteId) {
+      updateNote(editingNoteId, {
+        title: noteTitle,
+        body: noteBody,
+        color: noteColor,
+        folder: noteFolder,
+        planId: notePlanId || activePlanId || undefined,
+      });
+      setEditingNoteId(null);
+    } else {
+      addNote({
+        title: noteTitle || "Untitled Note",
+        body: noteBody,
+        color: noteColor,
+        folder: noteFolder,
+        planId: notePlanId || activePlanId || undefined,
+      });
+    }
+    setNoteTitle(""); setNoteBody(""); setNoteTags(""); setShowNoteForm(false);
+  };
+
+  const startEditNoteItem = (n: Note) => {
+    setEditingNoteId(n.id);
+    setNoteTitle(n.title);
+    setNoteBody(n.body);
+    setNoteColor(n.color || "text-primary bg-primary/10");
+    setNoteFolder(n.folder || "Learning & Tech");
+    setNotePlanId(n.planId || "");
+    setShowNoteForm(true);
+  };
+
+  // Filtered entries
+  const filteredJournals = journals.filter(j => {
+    if (activeFolder !== "all" && j.folder !== activeFolder && !(activeFolder === "Daily Reflections" && !j.folder)) return false;
+    if (onlyPinned && !j.pinned) return false;
+    if (planFilter !== "all" && j.planId !== planFilter) return false;
+    if (searchQuery) {
+      const q = searchQuery.toLowerCase();
+      const text = `${j.wins} ${j.challenges} ${j.gratitude} ${j.lessons} ${j.tags?.join(" ")}`.toLowerCase();
+      if (!text.includes(q)) return false;
+    }
+    return true;
+  }).sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0));
+
+  const filteredNotes = notes.filter(n => {
+    if (activeFolder !== "all" && n.folder !== activeFolder && !(activeFolder === "Learning & Tech" && !n.folder)) return false;
+    if (onlyPinned && !n.pinned) return false;
+    if (planFilter !== "all" && n.planId !== planFilter) return false;
+    if (searchQuery) {
+      const q = searchQuery.toLowerCase();
+      const text = `${n.title} ${n.body}`.toLowerCase();
+      if (!text.includes(q)) return false;
+    }
+    return true;
+  }).sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0));
+
+  const allFolderNames = ["all", ...customFolders];
+
   return (
-    <div className="p-7 space-y-6 max-w-4xl mx-auto text-foreground font-['Poppins']">
-      {/* Quick Prompts Hub */}
-      <Card className="p-4 border-primary/20 bg-primary/5 flex flex-wrap items-center justify-between gap-3">
-        <span className="text-xs font-extrabold text-primary uppercase tracking-wider flex items-center gap-1.5">
-          <Zap size={14} /> Guided Reflection Templates:
-        </span>
-        <div className="flex gap-2 flex-wrap">
-          <Btn onClick={() => applyPrompt("evening")} variant="outline" className="text-[11px] py-1.5 bg-card">🧠 Evening Reflection</Btn>
-          <Btn onClick={() => applyPrompt("gratitude")} variant="outline" className="text-[11px] py-1.5 bg-card">⚡ Daily Gratitude</Btn>
-          <Btn onClick={() => applyPrompt("weekly")} variant="outline" className="text-[11px] py-1.5 bg-card">🎯 Weekly Review</Btn>
+    <div className="p-7 space-y-6 max-w-5xl mx-auto text-foreground font-['Plus_Jakarta_Sans']">
+      
+      {/* HEADER & TOP CONTROL BAR */}
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 border-b border-border/60 pb-4">
+        <div>
+          <h2 className="text-xl font-extrabold tracking-tight flex items-center gap-2">
+            🧠 Knowledge, Notes & Reflections Hub
+          </h2>
+          <p className="text-xs text-muted-foreground mt-0.5">Organize folders, pin key insights, and link entries directly to your Growth Plans.</p>
         </div>
-      </Card>
 
-      <Card className="p-5 border-border bg-card space-y-4">
-        <h3 className="text-xs font-extrabold text-foreground/40 uppercase tracking-widest">New Journal Entry</h3>
-        <div className="flex gap-2 items-center flex-wrap">
-          <span className="text-xs text-foreground/50 font-bold mr-1">Select Mood:</span>
-          {["😄", "😊", "😐", "😔", "😰", "😤", "🧘", "🔥"].map(m => (
-            <button
-              key={m}
-              type="button"
-              onClick={() => setMood(m)}
-              className={`w-9 h-9 rounded-full flex items-center justify-center text-lg border transition-all ${mood === m ? "bg-primary/10 border-primary scale-105" : "border-border hover:bg-muted"}`}
-            >
-              {m}
-            </button>
-          ))}
+        {/* Sub-tab switchers */}
+        <div className="flex items-center gap-2 bg-muted p-1 rounded-2xl border border-border/60 shadow-inner">
+          <button
+            onClick={() => { setSubTab("reflections"); setActiveFolder("all"); }}
+            className={`px-4 py-2 rounded-xl text-xs font-extrabold transition-all ${subTab === "reflections" ? "bg-card text-primary shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
+          >
+            📔 Daily Reflections ({journals.length})
+          </button>
+          <button
+            onClick={() => { setSubTab("notes"); setActiveFolder("all"); }}
+            className={`px-4 py-2 rounded-xl text-xs font-extrabold transition-all ${subTab === "notes" ? "bg-card text-primary shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
+          >
+            📝 Free-form Notes ({notes.length})
+          </button>
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <Textarea label="Today's Wins" placeholder="What went well today?" value={wins} onChange={e => setWins(e.target.value)} rows={3} />
-          <Textarea label="Today's Challenges" placeholder="What obstacles did you face?" value={challenges} onChange={e => setChallenges(e.target.value)} rows={3} />
-          <Textarea label="Gratitude focus" placeholder="Name 3 things you are grateful for today..." value={gratitude} onChange={e => setGratitude(e.target.value)} rows={3} />
-          <Textarea label="Lessons Learned" placeholder="What will you do differently next time?" value={lessons} onChange={e => setLessons(e.target.value)} rows={3} />
-        </div>
-        <Btn onClick={handleAddJournal} className="w-full sm:w-auto">Save Reflection Journal</Btn>
-      </Card>
+      </div>
 
-      {/* Logged reflections */}
-      <div className="space-y-4">
-        {journals.length === 0 ? (
-          <Card className="p-6 text-center text-xs text-foreground/40 border-dashed">
-            No journal entries yet. Click a template button above or write your first reflection today!
-          </Card>
-        ) : (
-          journals.map(j => (
-            <Card key={j.id} className="p-5 border-border bg-card space-y-3">
-              <div className="flex justify-between items-center border-b border-border/40 pb-2">
-                <span className="text-[10px] text-foreground/45 font-bold uppercase tracking-wider">Reflected on {j.date}</span>
-                <span className="text-lg bg-muted px-2 py-0.5 rounded-full border border-border/20">{j.mood}</span>
+      {/* FOLDERS & SEARCH BAR */}
+      <div className="space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-3 bg-card p-3.5 rounded-2xl border border-border shadow-xs">
+          
+          {/* Folders pill navigation */}
+          <div className="flex items-center gap-1.5 overflow-x-auto pb-1 max-w-full flex-wrap">
+            <span className="text-[11px] font-extrabold text-muted-foreground uppercase tracking-wider mr-1 flex items-center gap-1">
+              <Folder size={13} /> Folders:
+            </span>
+            {allFolderNames.map(f => (
+              <button
+                key={f}
+                onClick={() => setActiveFolder(f)}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap ${
+                  activeFolder === f
+                    ? "bg-primary text-white shadow-xs font-extrabold"
+                    : "bg-muted/60 text-muted-foreground hover:text-foreground hover:bg-muted"
+                }`}
+              >
+                {f === "all" ? "📂 All Folders" : `📁 ${f}`}
+              </button>
+            ))}
+            
+            {!showAddFolder ? (
+              <button
+                onClick={() => setShowAddFolder(true)}
+                className="px-2.5 py-1.5 rounded-xl text-xs font-extrabold border border-dashed border-primary/40 text-primary bg-primary/5 hover:bg-primary/10 transition-all flex items-center gap-1"
+              >
+                <Plus size={12} /> New Folder
+              </button>
+            ) : (
+              <div className="flex items-center gap-1 bg-muted p-1 rounded-xl">
+                <input
+                  type="text"
+                  placeholder="Folder name..."
+                  value={newFolderName}
+                  onChange={e => setNewFolderName(e.target.value)}
+                  onKeyDown={e => e.key === "Enter" && handleCreateFolder()}
+                  className="text-xs px-2 py-1 bg-card rounded-lg border border-border w-28 outline-none"
+                  autoFocus
+                />
+                <button onClick={handleCreateFolder} className="text-[10px] bg-primary text-white font-bold px-2 py-1 rounded-lg">Add</button>
+                <button onClick={() => setShowAddFolder(false)} className="text-[10px] text-muted-foreground px-1.5">✕</button>
               </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
-                {j.wins && <div><p className="text-primary font-bold">Wins</p><p className="text-foreground/70 mt-0.5 leading-relaxed whitespace-pre-line">{j.wins}</p></div>}
-                {j.challenges && <div><p className="text-red-500 font-bold">Challenges</p><p className="text-foreground/70 mt-0.5 leading-relaxed whitespace-pre-line">{j.challenges}</p></div>}
-                {j.gratitude && <div className="col-span-1 md:col-span-2 border-t border-border/30 pt-2"><p className="text-accent font-bold">Gratitude Focus</p><p className="text-foreground/60 mt-0.5 leading-relaxed whitespace-pre-line">{j.gratitude}</p></div>}
-                {j.lessons && <div className="col-span-1 md:col-span-2 border-t border-border/30 pt-2"><p className="text-purple-400 font-bold">Lessons & Takeaways</p><p className="text-foreground/60 mt-0.5 leading-relaxed whitespace-pre-line">{j.lessons}</p></div>}
+            )}
+          </div>
+
+          {/* Search, Pin and Plan filters */}
+          <div className="flex items-center gap-2 flex-wrap w-full md:w-auto justify-end">
+            <div className="relative flex-1 md:w-52">
+              <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+              <input
+                type="text"
+                placeholder="Search text, tags, lessons..."
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+                className="w-full text-xs pl-8 pr-3 py-1.5 rounded-xl bg-muted/60 border border-border/80 focus:bg-card focus:border-primary outline-none transition-all"
+              />
+            </div>
+
+            <button
+              onClick={() => setOnlyPinned(!onlyPinned)}
+              className={`px-3 py-1.5 rounded-xl text-xs font-extrabold border transition-all flex items-center gap-1.5 ${
+                onlyPinned
+                  ? "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30 shadow-xs"
+                  : "bg-card text-muted-foreground border-border hover:text-foreground"
+              }`}
+            >
+              <Star size={13} className={onlyPinned ? "fill-amber-500" : ""} /> Pinned
+            </button>
+
+            {growthPlans.length > 0 && (
+              <select
+                value={planFilter}
+                onChange={e => setPlanFilter(e.target.value)}
+                className="text-xs bg-card border border-border rounded-xl px-2.5 py-1.5 font-bold text-foreground outline-none focus:border-primary"
+              >
+                <option value="all">🎯 All Growth Plans</option>
+                {growthPlans.map(p => (
+                  <option key={p.id} value={p.id}>{p.title}</option>
+                ))}
+              </select>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* SUB-TAB 1: DAILY REFLECTIONS ENGINE */}
+      {subTab === "reflections" && (
+        <div className="space-y-6 animate-fadeIn">
+          
+          {/* Guided Prompts Box */}
+          <Card className="p-4 border-primary/20 bg-primary/5 flex flex-wrap items-center justify-between gap-3">
+            <span className="text-xs font-extrabold text-primary uppercase tracking-wider flex items-center gap-1.5">
+              <Zap size={14} className="animate-pulse" /> Guided Reflection Templates:
+            </span>
+            <div className="flex gap-2 flex-wrap">
+              <Btn onClick={() => applyPrompt("evening")} variant="outline" className="text-[11px] py-1.5 bg-card hover:border-primary font-bold">🧠 Evening Reflection</Btn>
+              <Btn onClick={() => applyPrompt("gratitude")} variant="outline" className="text-[11px] py-1.5 bg-card hover:border-primary font-bold">⚡ Daily Gratitude</Btn>
+              <Btn onClick={() => applyPrompt("weekly")} variant="outline" className="text-[11px] py-1.5 bg-card hover:border-primary font-bold">🎯 Weekly Review</Btn>
+            </div>
+          </Card>
+
+          {/* New Reflection Form */}
+          <Card className="p-5 border-border bg-card shadow-sm space-y-4">
+            <div className="flex justify-between items-center border-b border-border/40 pb-3 flex-wrap gap-2">
+              <h3 className="text-xs font-extrabold text-muted-foreground uppercase tracking-widest flex items-center gap-1.5">
+                <Plus size={14} className="text-primary" /> Log New Reflection Entry
+              </h3>
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-xs text-foreground/60 font-bold">Folder:</span>
+                <select
+                  value={refFolder}
+                  onChange={e => setRefFolder(e.target.value)}
+                  className="text-xs bg-muted border border-border rounded-lg px-2 py-1 font-bold"
+                >
+                  {customFolders.map(f => <option key={f} value={f}>{f}</option>)}
+                </select>
+                {growthPlans.length > 0 && (
+                  <>
+                    <span className="text-xs text-foreground/60 font-bold ml-2">Plan:</span>
+                    <select
+                      value={refPlanId}
+                      onChange={e => setRefPlanId(e.target.value)}
+                      className="text-xs bg-muted border border-border rounded-lg px-2 py-1 font-bold text-primary"
+                    >
+                      <option value="">No Plan Linked</option>
+                      {growthPlans.map(p => <option key={p.id} value={p.id}>{p.title}</option>)}
+                    </select>
+                  </>
+                )}
+              </div>
+            </div>
+
+            <div className="flex gap-2 items-center flex-wrap pt-1">
+              <span className="text-xs text-foreground/60 font-extrabold mr-1">Select Today's Mood:</span>
+              {["😄", "😊", "😐", "😔", "😰", "😤", "🧘", "🔥"].map(m => (
+                <button
+                  key={m}
+                  type="button"
+                  onClick={() => setMood(m)}
+                  className={`w-9 h-9 rounded-full flex items-center justify-center text-lg border transition-all ${
+                    mood === m ? "bg-primary/15 border-primary scale-110 shadow-xs ring-2 ring-primary/20" : "border-border hover:bg-muted"
+                  }`}
+                >
+                  {m}
+                </button>
+              ))}
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <Textarea label="Today's Wins & Progress" placeholder="What went well today? What accomplishments are you proud of?" value={wins} onChange={e => setWins(e.target.value)} rows={3} />
+              <Textarea label="Today's Challenges & Obstacles" placeholder="What blocked your focus or slowed you down?" value={challenges} onChange={e => setChallenges(e.target.value)} rows={3} />
+              <Textarea label="Gratitude Focus" placeholder="Name 3 things you are truly grateful for today..." value={gratitude} onChange={e => setGratitude(e.target.value)} rows={3} />
+              <Textarea label="Lessons Learned & Takeaways" placeholder="What will you do differently next time? Key insights?" value={lessons} onChange={e => setLessons(e.target.value)} rows={3} />
+            </div>
+
+            <div className="flex justify-between items-center pt-2 flex-wrap gap-3">
+              <div className="flex items-center gap-2 flex-1 max-w-sm">
+                <span className="text-xs font-bold text-muted-foreground">Tags:</span>
+                <input
+                  type="text"
+                  placeholder="e.g. system-design, deep-work, mindset (comma separated)"
+                  value={refTags}
+                  onChange={e => setRefTags(e.target.value)}
+                  className="text-xs px-3 py-1.5 bg-muted rounded-xl border border-border flex-1 outline-none"
+                />
+              </div>
+              <Btn onClick={handleAddJournal} className="px-6 font-extrabold shadow-sm">
+                Save Reflection Entry
+              </Btn>
+            </div>
+          </Card>
+
+          {/* Logged reflections list */}
+          <div className="space-y-4">
+            <div className="flex justify-between items-center">
+              <span className="text-xs font-extrabold text-muted-foreground uppercase tracking-widest">
+                {activeFolder === "all" ? "All Reflections" : `${activeFolder} Entries`} ({filteredJournals.length})
+              </span>
+            </div>
+
+            {filteredJournals.length === 0 ? (
+              <Card className="p-10 text-center text-xs text-muted-foreground border-dashed space-y-2">
+                <BookOpen size={32} className="mx-auto text-primary/30" />
+                <p className="font-bold">No reflection entries found.</p>
+                <p className="text-[11px] opacity-75">Try selecting a guided template button above or clearing your search filter!</p>
+              </Card>
+            ) : (
+              filteredJournals.map(j => {
+                const linkedPlan = growthPlans.find(p => p.id === j.planId);
+                return (
+                  <Card key={j.id} className={`p-5 border ${j.pinned ? "border-amber-500/40 bg-amber-500/5 shadow-md" : "border-border bg-card"} space-y-3.5 transition-all relative group`}>
+                    <div className="flex justify-between items-center border-b border-border/40 pb-2.5 flex-wrap gap-2">
+                      <div className="flex items-center gap-2.5">
+                        <span className="text-2xl">{j.mood}</span>
+                        <div>
+                          <span className="text-xs font-extrabold text-foreground">Reflected on {j.date}</span>
+                          <div className="flex items-center gap-2 mt-0.5">
+                            <span className="text-[10px] bg-muted px-2 py-0.5 rounded-md font-bold text-muted-foreground">📁 {j.folder || "Daily Reflections"}</span>
+                            {linkedPlan && (
+                              <span className="text-[10px] bg-primary/10 text-primary border border-primary/20 px-2 py-0.5 rounded-md font-extrabold">🎯 {linkedPlan.title}</span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          onClick={() => updateJournal(j.id, { pinned: !j.pinned })}
+                          className={`p-1.5 rounded-xl border transition-all ${
+                            j.pinned
+                              ? "bg-amber-500/15 text-amber-500 border-amber-500/30"
+                              : "bg-muted text-muted-foreground border-border hover:text-amber-500"
+                          }`}
+                          title={j.pinned ? "Unpin entry" : "Pin entry to top"}
+                        >
+                          <Star size={14} className={j.pinned ? "fill-amber-500" : ""} />
+                        </button>
+                        <button
+                          onClick={() => deleteJournal(j.id)}
+                          className="p-1.5 rounded-xl bg-muted text-muted-foreground hover:text-red-500 hover:bg-red-500/10 border border-border transition-all"
+                          title="Delete entry"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+                      {j.wins && (
+                        <div className="bg-muted/30 p-3 rounded-xl border border-border/40">
+                          <p className="text-emerald-600 dark:text-emerald-400 font-extrabold mb-1 flex items-center gap-1">✨ Today's Wins</p>
+                          <p className="text-foreground/80 leading-relaxed whitespace-pre-line font-medium">{j.wins}</p>
+                        </div>
+                      )}
+                      {j.challenges && (
+                        <div className="bg-muted/30 p-3 rounded-xl border border-border/40">
+                          <p className="text-red-500 font-extrabold mb-1 flex items-center gap-1">🚧 Challenges & Obstacles</p>
+                          <p className="text-foreground/80 leading-relaxed whitespace-pre-line font-medium">{j.challenges}</p>
+                        </div>
+                      )}
+                      {j.gratitude && (
+                        <div className="col-span-1 md:col-span-2 bg-primary/5 p-3 rounded-xl border border-primary/10">
+                          <p className="text-primary font-extrabold mb-1 flex items-center gap-1">🙏 Gratitude Focus</p>
+                          <p className="text-foreground/85 leading-relaxed whitespace-pre-line font-medium">{j.gratitude}</p>
+                        </div>
+                      )}
+                      {j.lessons && (
+                        <div className="col-span-1 md:col-span-2 bg-purple-500/5 p-3 rounded-xl border border-purple-500/10">
+                          <p className="text-purple-600 dark:text-purple-400 font-extrabold mb-1 flex items-center gap-1">💡 Lessons Learned & Key Takeaways</p>
+                          <p className="text-foreground/85 leading-relaxed whitespace-pre-line font-medium">{j.lessons}</p>
+                        </div>
+                      )}
+                    </div>
+
+                    {j.tags && j.tags.length > 0 && (
+                      <div className="flex gap-1.5 pt-2 border-t border-border/30 flex-wrap">
+                        {j.tags.map(t => (
+                          <span key={t} className="text-[10px] bg-muted text-muted-foreground font-bold px-2 py-0.5 rounded-full border border-border/40">
+                            #{t}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </Card>
+                );
+              })
+            )}
+          </div>
+
+        </div>
+      )}
+
+      {/* SUB-TAB 2: FREE-FORM NOTES & KNOWLEDGE BASE */}
+      {subTab === "notes" && (
+        <div className="space-y-6 animate-fadeIn">
+          
+          <div className="flex justify-between items-center">
+            <span className="text-xs font-extrabold text-muted-foreground uppercase tracking-widest">
+              {activeFolder === "all" ? "All Notes & Documents" : `${activeFolder} Notes`} ({filteredNotes.length})
+            </span>
+            <Btn onClick={() => { setEditingNoteId(null); setNoteTitle(""); setNoteBody(""); setShowNoteForm(true); }} className="text-xs font-extrabold shadow-sm flex items-center gap-1.5">
+              <Plus size={14} /> New Note / Document
+            </Btn>
+          </div>
+
+          {showNoteForm && (
+            <Card className="p-5 border-primary/30 bg-card shadow-md space-y-4 animate-scale-up">
+              <div className="flex justify-between items-center border-b border-border/40 pb-3">
+                <h3 className="text-sm font-extrabold text-foreground flex items-center gap-1.5">
+                  {editingNoteId ? "✏️ Edit Note" : "📝 Create New Note"}
+                </h3>
+                <button onClick={() => { setShowNoteForm(false); setEditingNoteId(null); }} className="text-xs text-muted-foreground hover:text-foreground">✕ Close</button>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <div className="space-y-1 md:col-span-1">
+                  <label className="text-[11px] font-extrabold text-muted-foreground uppercase">Folder</label>
+                  <select
+                    value={noteFolder}
+                    onChange={e => setNoteFolder(e.target.value)}
+                    className="w-full text-xs bg-muted border border-border rounded-xl px-3 py-2 font-bold"
+                  >
+                    {customFolders.map(f => <option key={f} value={f}>{f}</option>)}
+                  </select>
+                </div>
+
+                {growthPlans.length > 0 && (
+                  <div className="space-y-1 md:col-span-1">
+                    <label className="text-[11px] font-extrabold text-muted-foreground uppercase">Link Growth Plan</label>
+                    <select
+                      value={notePlanId}
+                      onChange={e => setNotePlanId(e.target.value)}
+                      className="w-full text-xs bg-muted border border-border rounded-xl px-3 py-2 font-bold text-primary"
+                    >
+                      <option value="">No Plan Linked</option>
+                      {growthPlans.map(p => <option key={p.id} value={p.id}>{p.title}</option>)}
+                    </select>
+                  </div>
+                )}
+
+                <div className="space-y-1 md:col-span-1">
+                  <label className="text-[11px] font-extrabold text-muted-foreground uppercase">Accent Badge</label>
+                  <select
+                    value={noteColor}
+                    onChange={e => setNoteColor(e.target.value)}
+                    className="w-full text-xs bg-muted border border-border rounded-xl px-3 py-2 font-bold"
+                  >
+                    <option value="text-primary bg-primary/10">Emerald / Primary</option>
+                    <option value="text-purple-600 dark:text-purple-400 bg-purple-500/10">Purple / Career</option>
+                    <option value="text-amber-600 dark:text-amber-400 bg-amber-500/10">Amber / Streak</option>
+                    <option value="text-cyan-600 dark:text-cyan-400 bg-cyan-500/10">Cyan / Health</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="space-y-3">
+                <Input
+                  placeholder="Note Title (e.g. System Design Key Principles, Tech Stack Roadmap...)"
+                  value={noteTitle}
+                  onChange={e => setNoteTitle(e.target.value)}
+                  className="font-bold text-sm"
+                />
+                <Textarea
+                  placeholder="Note Body & Detailed Context (markdown, bullet points, links...)"
+                  value={noteBody}
+                  onChange={e => setNoteBody(e.target.value)}
+                  rows={6}
+                />
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2 border-t border-border/40">
+                <Btn onClick={() => { setShowNoteForm(false); setEditingNoteId(null); }} variant="ghost" className="text-xs">Cancel</Btn>
+                <Btn onClick={handleSaveNote} className="text-xs font-extrabold px-6">Save Note</Btn>
               </div>
             </Card>
-          ))
-        )}
-      </div>
+          )}
+
+          {filteredNotes.length === 0 ? (
+            <Card className="p-10 text-center text-xs text-muted-foreground border-dashed space-y-2">
+              <FileText size={32} className="mx-auto text-primary/30" />
+              <p className="font-bold">No notes found right now.</p>
+              <p className="text-[11px] opacity-75">Click "New Note / Document" above to capture key learnings and ideas!</p>
+            </Card>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {filteredNotes.map(n => {
+                const linkedPlan = growthPlans.find(p => p.id === n.planId);
+                return (
+                  <Card
+                    key={n.id}
+                    className={`p-5 rounded-2xl border ${n.pinned ? "border-amber-500/50 bg-amber-500/5 shadow-md" : "border-border bg-card"} relative group shadow-sm flex flex-col justify-between min-h-[160px] transition-all hover:border-primary/30`}
+                  >
+                    <div className="space-y-2.5">
+                      <div className="flex items-center justify-between gap-2 border-b border-border/40 pb-2">
+                        <div className="flex items-center gap-2 min-w-0">
+                          {n.pinned && <Star size={14} className="text-amber-500 fill-amber-500 flex-shrink-0" />}
+                          <p className="text-foreground font-extrabold text-base truncate">{n.title || "Untitled Note"}</p>
+                        </div>
+
+                        <div className="flex items-center gap-1">
+                          <button
+                            onClick={() => updateNote(n.id, { pinned: !n.pinned })}
+                            className={`p-1.5 rounded-lg transition-all ${
+                              n.pinned ? "bg-amber-500/15 text-amber-500" : "bg-muted text-muted-foreground hover:text-amber-500"
+                            }`}
+                            title={n.pinned ? "Unpin note" : "Pin note"}
+                          >
+                            <Star size={13} className={n.pinned ? "fill-amber-500" : ""} />
+                          </button>
+                          <button
+                            onClick={() => startEditNoteItem(n)}
+                            className="p-1.5 rounded-lg bg-muted text-muted-foreground hover:text-primary hover:bg-primary/10 transition-all"
+                            title="Edit note"
+                          >
+                            <Pencil size={13} />
+                          </button>
+                          <button
+                            onClick={() => deleteNote(n.id)}
+                            className="p-1.5 rounded-lg bg-muted text-muted-foreground hover:text-red-500 hover:bg-red-500/10 transition-all"
+                            title="Delete note"
+                          >
+                            <Trash2 size={13} />
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-[10px] bg-muted text-muted-foreground px-2 py-0.5 rounded-md font-bold">
+                          📁 {n.folder || "Learning & Tech"}
+                        </span>
+                        {linkedPlan && (
+                          <span className="text-[10px] bg-primary/10 text-primary border border-primary/20 px-2 py-0.5 rounded-md font-extrabold">
+                            🎯 {linkedPlan.title}
+                          </span>
+                        )}
+                      </div>
+
+                      <p className="text-foreground/80 text-xs leading-relaxed whitespace-pre-line pt-1 font-medium">{n.body}</p>
+                    </div>
+
+                    <div className="flex justify-between items-center text-[10px] text-muted-foreground mt-4 pt-2.5 border-t border-border/30 font-medium">
+                      <span>Created: {n.createdAt}</span>
+                      <span className={`px-2 py-0.5 rounded-full font-bold ${n.color || "text-primary bg-primary/10"}`}>
+                        Note
+                      </span>
+                    </div>
+                  </Card>
+                );
+              })}
+            </div>
+          )}
+
+        </div>
+      )}
+
     </div>
   );
 }
@@ -3975,13 +5538,95 @@ function TimeTrackerView() {
 }
 
 function AchievementsView() {
-  const { user, coins, rewards, buyReward } = useAuth();
+  const { user, coins, rewards, buyReward, tasks, habits, focusSessions, journals, growthPlans } = useAuth();
   
+  // 1. Dynamic Level & Season Pass Tier calculations
+  const totalXp = user?.xp || 0;
+  const currentLevel = Math.floor(totalXp / 500) + 1;
+  const xpInLevel = totalXp % 500;
+  const levelProgressPct = Math.min(100, Math.round((xpInLevel / 500) * 100));
+
+  const seasonTier = Math.floor(totalXp / 1000) + 1;
+  const seasonTierProgressPct = Math.min(100, Math.round(((totalXp % 1000) / 1000) * 100));
+
+  // 2. Real metrics derived from database & local storage activity
+  const completedTasksCount = tasks.filter(t => t.done).length;
+  const bestStreak = Math.max(
+    user?.streak || 0,
+    ...habits.map(h => Math.max(h.longestStreak || 0, h.streak || 0)),
+    0
+  );
+  const habitsDoneCount = habits.reduce((acc, h) => acc + (h.completedToday ? 1 : 0) + (h.streak || 0), 0);
+  const focusMinutesTotal = focusSessions.reduce((acc, s) => acc + (s.duration || 0), 0) +
+    tasks.filter(t => t.done).reduce((acc, t) => acc + (t.estimatedDuration || 30), 0);
+  const focusHoursTotal = Math.round((focusMinutesTotal / 60) * 10) / 10;
+
+  // 3. Dynamic Badges Engine
   const badges = [
-    { id: "b1", name: "Early Bird", desc: "Wake up before 6 AM for 5 consecutive days", icon: "🌅", unlocked: true },
-    { id: "b2", name: "Habit Master", desc: "Reach 21-day streak on any habit", icon: "🏆", unlocked: true },
-    { id: "b3", name: "Deep Thinker", desc: "Complete 10 hours of deep work sessions", icon: "🧠", unlocked: false },
-    { id: "b4", name: "Study Partner", desc: "Participate in 3 shared Pomodoro tasks", icon: "👥", unlocked: false },
+    {
+      id: "b1",
+      name: "First Step",
+      desc: "Complete your very first task (+15 XP)",
+      icon: "⚡",
+      unlocked: completedTasksCount >= 1,
+      progressText: `${completedTasksCount} / 1 tasks`
+    },
+    {
+      id: "b2",
+      name: "Task Master",
+      desc: "Complete 10 high-impact personal tasks",
+      icon: "🎯",
+      unlocked: completedTasksCount >= 10,
+      progressText: `${Math.min(10, completedTasksCount)} / 10 tasks`
+    },
+    {
+      id: "b3",
+      name: "Habit Warrior",
+      desc: "Check off 5 habits or maintain consistency",
+      icon: "🔥",
+      unlocked: habitsDoneCount >= 5,
+      progressText: `${Math.min(5, habitsDoneCount)} / 5 check-ins`
+    },
+    {
+      id: "b4",
+      name: "Streak Master",
+      desc: "Reach a 7-day consistency streak across habits",
+      icon: "🏆",
+      unlocked: bestStreak >= 7,
+      progressText: `${Math.min(7, bestStreak)} / 7 days`
+    },
+    {
+      id: "b5",
+      name: "Deep Thinker",
+      desc: "Log 5 hours of deep work or stopwatch sessions",
+      icon: "🧠",
+      unlocked: focusHoursTotal >= 5,
+      progressText: `${Math.min(5, focusHoursTotal)} / 5 hours`
+    },
+    {
+      id: "b6",
+      name: "Reflection Guru",
+      desc: "Write 3 reflection journals or daily entries",
+      icon: "📓",
+      unlocked: journals.length >= 3,
+      progressText: `${Math.min(3, journals.length)} / 3 entries`
+    },
+    {
+      id: "b7",
+      name: "Plan Architect",
+      desc: "Create and activate a personalized Growth Plan",
+      icon: "🗺️",
+      unlocked: growthPlans.length >= 1,
+      progressText: `${Math.min(1, growthPlans.length)} / 1 plans`
+    },
+    {
+      id: "b8",
+      name: "Legendary Consistency",
+      desc: "Achieve Level 5 or earn over 2,500 total XP",
+      icon: "👑",
+      unlocked: currentLevel >= 5 || totalXp >= 2500,
+      progressText: `${totalXp} / 2500 XP`
+    }
   ];
 
   const handleBuyReward = (id: string) => {
@@ -3994,123 +5639,406 @@ function AchievementsView() {
   };
 
   return (
-    <div className="p-7 space-y-6 max-w-4xl mx-auto text-foreground font-['Poppins']">
-      {/* Season Pass tracker */}
-      <Card className="p-5 border-border bg-card space-y-4">
-        <div className="flex justify-between items-center border-b border-border/40 pb-2">
-          <h3 className="text-xs font-extrabold text-foreground/40 uppercase tracking-widest">Season Pass Progress (Season 1)</h3>
-          <span className="text-xs text-primary font-bold">Current Tier: 4</span>
-        </div>
-        <div className="h-4 rounded-full bg-muted overflow-hidden relative flex items-center">
-          <div className="h-full bg-gradient-to-r from-primary to-accent transition-all" style={{ width: "45%" }} />
-          <span className="absolute inset-0 flex items-center justify-center text-[10px] text-foreground/60 font-bold">45% to Tier 5 Reward (Custom Soundscape)</span>
-        </div>
-      </Card>
+    <div className="p-7 space-y-6 max-w-5xl mx-auto text-foreground font-['Plus_Jakarta_Sans']">
+      
+      {/* HEADER & LEVEL STATUS BANNER */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+        <Card className="p-5 border-border bg-card shadow-sm md:col-span-2 flex flex-col justify-between">
+          <div className="flex justify-between items-start">
+            <div>
+              <span className="text-[10px] bg-primary/10 text-primary font-extrabold px-2.5 py-1 rounded-full uppercase tracking-wider">
+                XP Rewards Engine Active
+              </span>
+              <h2 className="text-2xl font-extrabold text-foreground mt-2 flex items-center gap-2">
+                Level {currentLevel} Growth Operator
+              </h2>
+              <p className="text-xs text-muted-foreground mt-1">
+                You have earned <strong className="text-primary font-bold">{totalXp.toLocaleString()} XP</strong> total across tasks (+15 XP), habits (+20 XP), milestones (+50 XP), and check-ins (+25 XP).
+              </p>
+            </div>
+            <div className="text-right">
+              <span className="text-3xl font-extrabold text-primary">{totalXp}</span>
+              <p className="text-[10px] text-muted-foreground uppercase font-bold">Total XP</p>
+            </div>
+          </div>
 
-      {/* Badges Grid */}
+          <div className="mt-5 space-y-1.5">
+            <div className="flex justify-between text-xs font-bold text-muted-foreground">
+              <span>Progress to Level {currentLevel + 1}</span>
+              <span className="text-foreground">{xpInLevel} / 500 XP ({levelProgressPct}%)</span>
+            </div>
+            <div className="h-3 rounded-full bg-muted overflow-hidden relative border border-border/40">
+              <div className="h-full bg-gradient-to-r from-violet-600 to-pink-600 transition-all duration-500" style={{ width: `${levelProgressPct}%` }} />
+            </div>
+          </div>
+        </Card>
+
+        {/* Season Pass tracker */}
+        <Card className="p-5 border-border bg-card shadow-sm flex flex-col justify-between space-y-4">
+          <div>
+            <div className="flex justify-between items-center pb-2">
+              <span className="text-[11px] font-extrabold text-muted-foreground uppercase tracking-wider">Season Pass Tier</span>
+              <span className="text-xs text-primary font-extrabold bg-primary/10 px-2 py-0.5 rounded-md">Tier {seasonTier}</span>
+            </div>
+            <h3 className="text-sm font-extrabold text-foreground mt-1">Season 1: Mastery Ascent</h3>
+            <p className="text-[11px] text-muted-foreground mt-1">Unlock exclusive soundscapes, themes, and profile badges at every tier milestone (1,000 XP/tier).</p>
+          </div>
+
+          <div className="space-y-1.5">
+            <div className="flex justify-between text-[11px] font-bold text-muted-foreground">
+              <span>Next Tier {seasonTier + 1}</span>
+              <span className="text-primary">{seasonTierProgressPct}%</span>
+            </div>
+            <div className="h-3 rounded-full bg-muted overflow-hidden relative border border-border/40">
+              <div className="h-full bg-gradient-to-r from-emerald-500 to-teal-500 transition-all duration-500" style={{ width: `${seasonTierProgressPct}%` }} />
+            </div>
+          </div>
+        </Card>
+      </div>
+
+      {/* DYNAMIC BADGES GRID */}
       <div className="space-y-3">
-        <h3 className="text-xs font-extrabold text-foreground/40 uppercase tracking-widest">Unlocked Badges</h3>
+        <div className="flex justify-between items-center border-b border-border/40 pb-2">
+          <div>
+            <h3 className="text-sm font-extrabold text-foreground tracking-tight">Dynamic Achievements & Badges</h3>
+            <p className="text-xs text-muted-foreground">Real-time unlocking verified against your database activity and streak records.</p>
+          </div>
+          <span className="text-xs font-extrabold bg-muted px-3 py-1 rounded-full text-foreground/80">
+            {badges.filter(b => b.unlocked).length} / {badges.length} Unlocked
+          </span>
+        </div>
+
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           {badges.map(b => (
-            <Card key={b.id} className={`p-4 text-center flex flex-col items-center justify-between border transition-all ${b.unlocked ? "border-primary/20 bg-primary/5" : "border-border opacity-50 bg-card"}`}>
+            <Card key={b.id} className={`p-4 text-center flex flex-col items-center justify-between border transition-all ${b.unlocked ? "border-primary/40 bg-primary/5 shadow-md hover:scale-[1.02]" : "border-border opacity-65 bg-card hover:opacity-85"}`}>
               <span className="text-4xl filter drop-shadow-sm mb-2">{b.icon}</span>
-              <div>
-                <h4 className="text-xs font-bold truncate">{b.name}</h4>
-                <p className="text-[9px] text-foreground/40 mt-1 leading-normal max-w-[120px] mx-auto">{b.desc}</p>
+              <div className="w-full">
+                <h4 className="text-xs font-extrabold text-foreground truncate">{b.name}</h4>
+                <p className="text-[10px] text-muted-foreground mt-1 leading-normal line-clamp-2 px-1">{b.desc}</p>
               </div>
-              <span className={`text-[8px] font-extrabold uppercase px-2 py-0.5 rounded-full border mt-3 ${b.unlocked ? "border-primary/30 text-primary bg-primary/10" : "border-border text-foreground/35"}`}>
-                {b.unlocked ? "Unlocked" : "Locked"}
-              </span>
+              <div className="w-full mt-3 pt-2 border-t border-border/40 flex flex-col items-center gap-1">
+                <span className="text-[10px] font-bold text-muted-foreground">{b.progressText}</span>
+                <span className={`text-[9px] font-extrabold uppercase px-2.5 py-0.5 rounded-full border w-full ${b.unlocked ? "border-emerald-500/30 text-emerald-600 dark:text-emerald-400 bg-emerald-500/10" : "border-border text-muted-foreground bg-muted/50"}`}>
+                  {b.unlocked ? "✓ Unlocked" : "Locked"}
+                </span>
+              </div>
             </Card>
           ))}
         </div>
       </div>
 
-      {/* Rewards Store */}
-      <div className="space-y-3">
-        <div className="flex justify-between items-center">
-          <h3 className="text-xs font-extrabold text-foreground/40 uppercase tracking-widest">GrowCoins Store</h3>
-          <span className="text-xs text-primary font-extrabold">Your Balance: 🪙 {coins} coins</span>
+      {/* REWARDS STORE */}
+      <div className="space-y-3 pt-2">
+        <div className="flex justify-between items-center border-b border-border/40 pb-2">
+          <div>
+            <h3 className="text-sm font-extrabold text-foreground tracking-tight">GrowCoins Rewards Store</h3>
+            <p className="text-xs text-muted-foreground">Redeem your earned GrowCoins (🪙) for custom profile accessories and themes.</p>
+          </div>
+          <span className="text-xs bg-amber-500/10 text-amber-600 dark:text-amber-400 font-extrabold px-3 py-1.5 rounded-xl border border-amber-500/20">
+            Your Balance: 🪙 {coins} coins
+          </span>
         </div>
+
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {rewards.map(r => (
-            <Card key={r.id} className="p-4 border-border bg-card flex justify-between items-center">
+            <Card key={r.id} className="p-4 border-border bg-card flex justify-between items-center hover:border-primary/20 transition-all">
               <div className="flex items-center gap-3">
                 <span className="text-3xl">{r.icon}</span>
                 <div>
-                  <h4 className="text-xs font-bold">{r.name}</h4>
-                  <p className="text-[9px] text-foreground/40 mt-0.5">{r.category} Accessory</p>
+                  <h4 className="text-xs font-bold text-foreground">{r.name}</h4>
+                  <p className="text-[10px] text-muted-foreground mt-0.5">{r.category} Accessory</p>
                 </div>
               </div>
               <button
                 onClick={() => handleBuyReward(r.id)}
-                disabled={r.bought}
-                className={`text-xs px-3 py-1.5 rounded-xl font-bold transition-all border ${r.bought ? "bg-emerald-500/10 text-emerald-500 border-emerald-500/20" : "bg-primary text-white border-transparent hover:opacity-90 disabled:opacity-50"}`}
+                disabled={r.bought || coins < r.cost}
+                className={`text-xs px-3.5 py-2 rounded-xl font-bold transition-all border ${r.bought ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20 cursor-default" : coins >= r.cost ? "bg-gradient-to-r from-violet-600 to-pink-600 text-white border-transparent hover:opacity-90 shadow-sm" : "bg-muted text-muted-foreground border-border opacity-60 cursor-not-allowed"}`}
               >
-                {r.bought ? "Bought" : `🪙 ${r.cost}`}
+                {r.bought ? "✓ Purchased" : `🪙 ${r.cost} coins`}
               </button>
             </Card>
           ))}
         </div>
       </div>
+
     </div>
   );
 }
 
 function AnalyticsView() {
-  const habitCategories = [
-    { name: "Fitness", value: 32, color: "#5B3765" },
-    { name: "Reading", value: 24, color: "#9E6899" },
-    { name: "Coding", value: 20, color: "#BA88AE" },
-    { name: "Wellness", value: 14, color: "#D6A8C4" },
-    { name: "Sleep", value: 10, color: "#F3CCDE" }
+  const { user, habits, tasks, focusSessions, journals, notes, healthLogs, growthPlans } = useAuth();
+
+  // 1. Real KPI Summary Metrics
+  const totalXp = user?.xp || 0;
+  const bestStreak = Math.max(
+    user?.streak || 0,
+    ...habits.map(h => Math.max(h.longestStreak || 0, h.streak || 0)),
+    0
+  );
+  
+  // Calculate total historical habits done from habit histories + completedToday
+  const habitsDoneTotal = habits.reduce((acc, h) => {
+    const historyCount = Array.isArray(h.history) ? h.history.length : 0;
+    return acc + Math.max(historyCount, h.completedToday ? 1 : 0, h.streak || 0);
+  }, 0);
+
+  // Focus & Study hours total
+  const focusMinutesTotal = focusSessions.reduce((acc, s) => acc + (s.duration || 0), 0) +
+    tasks.filter(t => t.done).reduce((acc, t) => acc + (t.estimatedDuration || 30), 0);
+  const focusHoursTotal = Math.round((focusMinutesTotal / 60) * 10) / 10;
+
+  const completedTasksCount = tasks.filter(t => t.done).length;
+  const pendingTasksCount = tasks.filter(t => !t.done).length;
+  const taskCompletionRate = tasks.length > 0 ? Math.round((completedTasksCount / tasks.length) * 100) : 0;
+
+  // 2. Real Habits Category Breakdown (PieChart)
+  const categoryMap: Record<string, number> = {};
+  habits.forEach(h => {
+    const cat = h.category || "General";
+    categoryMap[cat] = (categoryMap[cat] || 0) + 1;
+  });
+  if (Object.keys(categoryMap).length === 0) {
+    categoryMap["No Habits Yet"] = 1;
+  }
+
+  const categoryColors: Record<string, string> = {
+    Fitness: "#10B981",
+    Health: "#06B6D4",
+    Coding: "#8B5CF6",
+    Career: "#EC4899",
+    Reading: "#F59E0B",
+    Wellness: "#3B82F6",
+    Study: "#6366F1",
+    General: "#64748B",
+    "No Habits Yet": "#CBD5E1"
+  };
+
+  const habitCategoriesData = Object.entries(categoryMap).map(([name, value], idx) => ({
+    name,
+    value,
+    color: categoryColors[name] || `hsl(${(idx * 65) % 360}, 70%, 55%)`
+  }));
+
+  // 3. Real 14-Day Activity & XP Growth Trend (AreaChart)
+  // Derive activity from dates in healthLogs, focusSessions, and tasks
+  const recentDays: { dateStr: string; label: string; xp: number; focusMins: number; tasksDone: number }[] = [];
+  const today = new Date();
+  for (let i = 13; i >= 0; i--) {
+    const d = new Date(today);
+    d.setDate(today.getDate() - i);
+    const dateStr = d.toISOString().split("T")[0];
+    const label = d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+
+    // Calculate daily activity XP estimation & focus
+    const dayHealth = healthLogs.find(l => l.date === dateStr);
+    const dayFocus = focusSessions.filter(s => s.date === dateStr).reduce((sum, s) => sum + s.duration, 0);
+    const dayTasks = tasks.filter(t => t.dueDate === dateStr && t.done).length;
+
+    let dayXp = 0;
+    if (dayHealth) dayXp += 30;
+    if (dayFocus > 0) dayXp += Math.round(dayFocus / 5);
+    dayXp += dayTasks * 15;
+    
+    // Add baseline for current streak if active today
+    if (i === 0 && user?.streak) dayXp += 25;
+
+    recentDays.push({
+      dateStr,
+      label,
+      xp: dayXp,
+      focusMins: dayFocus,
+      tasksDone: dayTasks
+    });
+  }
+
+  // 4. Real Task Priority Breakdown (BarChart)
+  const priorityData = [
+    {
+      priority: "High",
+      Completed: tasks.filter(t => t.priority === "high" && t.done).length,
+      Pending: tasks.filter(t => t.priority === "high" && !t.done).length,
+      color: "#EF4444"
+    },
+    {
+      priority: "Medium",
+      Completed: tasks.filter(t => t.priority === "medium" && t.done).length,
+      Pending: tasks.filter(t => t.priority === "medium" && !t.done).length,
+      color: "#F59E0B"
+    },
+    {
+      priority: "Low",
+      Completed: tasks.filter(t => t.priority === "low" && t.done).length,
+      Pending: tasks.filter(t => t.priority === "low" && !t.done).length,
+      color: "#10B981"
+    }
   ];
-  const monthData = Array.from({ length: 30 }, (_, i) => ({ day: i + 1, xp: Math.floor(Math.random() * 200 + 100) }));
+
   return (
-    <div className="p-7 space-y-6 text-foreground">
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-        <Card className="p-5 border-border bg-card shadow-sm">
-          <h3 className="text-foreground font-bold mb-4">XP Earned (Monthly)</h3>
-          <ResponsiveContainer width="100%" height={200}>
-            <AreaChart data={monthData}>
+    <div className="p-7 space-y-6 max-w-6xl mx-auto text-foreground font-['Plus_Jakarta_Sans']">
+      
+      {/* HEADER BANNER */}
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 border-b border-border/60 pb-4">
+        <div>
+          <h2 className="text-xl font-extrabold tracking-tight flex items-center gap-2">
+            📊 Data-Driven Growth Analytics
+          </h2>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            100% live statistics computed dynamically from your database and local storage activity.
+          </p>
+        </div>
+        <div className="flex items-center gap-2.5">
+          <span className="text-xs bg-primary/10 text-primary font-extrabold px-3 py-1.5 rounded-xl border border-primary/20 flex items-center gap-1.5">
+            <Activity size={14} /> Live Sync Active
+          </span>
+        </div>
+      </div>
+
+      {/* REAL KPI SUMMARY GRID */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <Card className="p-4 text-center border-border bg-card shadow-sm hover:border-primary/30 transition-all">
+          <span className="text-2xl">⚡</span>
+          <p className="text-2xl font-extrabold text-primary font-['Plus_Jakarta_Sans'] mt-2">{totalXp.toLocaleString()} XP</p>
+          <p className="text-muted-foreground text-xs font-bold mt-0.5">Total Experience Level {user?.level || 1}</p>
+        </Card>
+        <Card className="p-4 text-center border-border bg-card shadow-sm hover:border-primary/30 transition-all">
+          <span className="text-2xl">🔥</span>
+          <p className="text-2xl font-extrabold text-amber-600 dark:text-amber-400 font-['Plus_Jakarta_Sans'] mt-2">{bestStreak} days</p>
+          <p className="text-muted-foreground text-xs font-bold mt-0.5">Longest Recorded Streak</p>
+        </Card>
+        <Card className="p-4 text-center border-border bg-card shadow-sm hover:border-primary/30 transition-all">
+          <span className="text-2xl">✅</span>
+          <p className="text-2xl font-extrabold text-foreground font-['Plus_Jakarta_Sans'] mt-2">{habitsDoneTotal}</p>
+          <p className="text-muted-foreground text-xs font-bold mt-0.5">Habit Check-ins Logged</p>
+        </Card>
+        <Card className="p-4 text-center border-border bg-card shadow-sm hover:border-primary/30 transition-all">
+          <span className="text-2xl">⏱️</span>
+          <p className="text-2xl font-extrabold text-purple-600 dark:text-purple-400 font-['Plus_Jakarta_Sans'] mt-2">{focusHoursTotal}h</p>
+          <p className="text-muted-foreground text-xs font-bold mt-0.5">Total Focus & Task Hours</p>
+        </Card>
+      </div>
+
+      {/* CHARTS ROW 1: XP TREND & HABIT DISTRIBUTION */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+        
+        {/* 14-Day Activity Trend */}
+        <Card className="p-5 border-border bg-card shadow-sm md:col-span-2 flex flex-col justify-between">
+          <div className="flex justify-between items-center mb-4 border-b border-border/40 pb-2.5">
+            <div>
+              <h3 className="text-foreground font-extrabold text-sm">Daily XP & Activity Velocity (14-Day History)</h3>
+              <p className="text-[11px] text-muted-foreground mt-0.5">Track daily experience points gained across habits, focus sessions, and tasks.</p>
+            </div>
+            <span className="text-xs font-extrabold text-primary bg-primary/10 px-2.5 py-1 rounded-lg">Real Trend</span>
+          </div>
+
+          <ResponsiveContainer width="100%" height={230}>
+            <AreaChart data={recentDays} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
               <defs>
-                <linearGradient id="xpG" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#5B3765" stopOpacity={0.4} />
-                  <stop offset="95%" stopColor="#5B3765" stopOpacity={0} />
+                <linearGradient id="xpAreaGrad" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor="hsl(var(--primary))" stopOpacity={0.45} />
+                  <stop offset="95%" stopColor="hsl(var(--primary))" stopOpacity={0} />
                 </linearGradient>
               </defs>
-              <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
-              <XAxis dataKey="day" tick={{ fill: "var(--muted-foreground)", fontSize: 10 }} axisLine={false} tickLine={false} />
-              <YAxis hide />
-              <Tooltip contentStyle={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: 12, color: "var(--foreground)", fontSize: 12 }} />
-              <Area type="monotone" dataKey="xp" stroke="#5B3765" strokeWidth={2.5} fill="url(#xpG)" name="XP" />
+              <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} opacity={0.6} />
+              <XAxis dataKey="label" tick={{ fill: "var(--muted-foreground)", fontSize: 11 }} axisLine={false} tickLine={false} />
+              <YAxis tick={{ fill: "var(--muted-foreground)", fontSize: 11 }} axisLine={false} tickLine={false} />
+              <Tooltip
+                contentStyle={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: 12, color: "var(--foreground)", fontSize: 12, fontWeight: "bold" }}
+                formatter={(val: number) => [`${val} XP`, "Experience Earned"]}
+              />
+              <Area type="monotone" dataKey="xp" stroke="hsl(var(--primary))" strokeWidth={2.5} fill="url(#xpAreaGrad)" name="XP" />
             </AreaChart>
           </ResponsiveContainer>
         </Card>
-        <Card className="p-5 border-border bg-card shadow-sm">
-          <h3 className="text-foreground font-bold mb-4">Habit Split</h3>
-          <ResponsiveContainer width="100%" height={200}>
+
+        {/* Habit Category Split */}
+        <Card className="p-5 border-border bg-card shadow-sm flex flex-col justify-between">
+          <div>
+            <h3 className="text-foreground font-extrabold text-sm mb-1">Habit Category Split</h3>
+            <p className="text-[11px] text-muted-foreground mb-3">Distribution across ({habits.length}) active habits.</p>
+          </div>
+
+          <ResponsiveContainer width="100%" height={180}>
             <PieChart>
-              <Pie data={habitCategories} cx="50%" cy="50%" innerRadius={50} outerRadius={80} paddingAngle={3} dataKey="value">
-                {habitCategories.map((e, i) => <Cell key={i} fill={e.color} />)}
+              <Pie data={habitCategoriesData} cx="50%" cy="50%" innerRadius={48} outerRadius={76} paddingAngle={4} dataKey="value">
+                {habitCategoriesData.map((e, i) => <Cell key={i} fill={e.color} />)}
               </Pie>
-              <Tooltip contentStyle={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: 12, color: "var(--foreground)", fontSize: 12 }} />
+              <Tooltip contentStyle={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: 12, color: "var(--foreground)", fontSize: 12, fontWeight: "bold" }} />
             </PieChart>
           </ResponsiveContainer>
-          <div className="flex flex-wrap gap-2.5 justify-center mt-2">
-            {habitCategories.map(c => (
-              <div key={c.name} className="flex items-center gap-1.5">
+
+          <div className="flex flex-wrap gap-2 justify-center pt-2 border-t border-border/40 max-h-24 overflow-y-auto">
+            {habitCategoriesData.map(c => (
+              <div key={c.name} className="flex items-center gap-1.5 bg-muted px-2 py-0.5 rounded-md text-[11px]">
                 <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: c.color }} />
-                <span className="text-foreground/50 text-xs font-semibold">{c.name}</span>
+                <span className="text-foreground font-bold">{c.name} ({c.value})</span>
               </div>
             ))}
           </div>
         </Card>
       </div>
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        {[["12,450","Total XP","⚡"],["67 days","Best Streak","🔥"],["843","Habits Done","✅"],["4","Challenges Won","🏆"]].map(([v,l,e]) => (
-          <Card key={l} className="p-4 text-center border-border bg-card shadow-sm"><span className="text-2xl">{e}</span><p className="text-xl font-extrabold text-foreground font-['Plus_Jakarta_Sans'] mt-2">{v}</p><p className="text-foreground/40 text-xs mt-0.5">{l}</p></Card>
-        ))}
+
+      {/* CHARTS ROW 2: TASK BREAKDOWN & COMPREHENSIVE STATS */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+        
+        {/* Task Priority Completion Breakdown */}
+        <Card className="p-5 border-border bg-card shadow-sm md:col-span-2 flex flex-col justify-between">
+          <div className="flex justify-between items-center mb-4 border-b border-border/40 pb-2.5">
+            <div>
+              <h3 className="text-foreground font-extrabold text-sm">Task Completion by Priority Level</h3>
+              <p className="text-[11px] text-muted-foreground mt-0.5">Compare completed vs pending tasks across High, Medium, and Low priorities.</p>
+            </div>
+            <span className="text-xs font-extrabold text-purple-600 dark:text-purple-400 bg-purple-500/10 px-2.5 py-1 rounded-lg">
+              {taskCompletionRate}% Done
+            </span>
+          </div>
+
+          <ResponsiveContainer width="100%" height={210}>
+            <BarChart data={priorityData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} opacity={0.6} />
+              <XAxis dataKey="priority" tick={{ fill: "var(--muted-foreground)", fontSize: 11 }} axisLine={false} tickLine={false} />
+              <YAxis tick={{ fill: "var(--muted-foreground)", fontSize: 11 }} axisLine={false} tickLine={false} allowDecimals={false} />
+              <Tooltip contentStyle={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: 12, color: "var(--foreground)", fontSize: 12, fontWeight: "bold" }} />
+              <Bar dataKey="Completed" fill="hsl(var(--primary))" radius={[6, 6, 0, 0]} name="Completed Tasks" />
+              <Bar dataKey="Pending" fill="hsl(var(--muted-foreground))" opacity={0.35} radius={[6, 6, 0, 0]} name="Pending Tasks" />
+            </BarChart>
+          </ResponsiveContainer>
+        </Card>
+
+        {/* Deep Dive Metrics List */}
+        <Card className="p-5 border-border bg-card shadow-sm flex flex-col justify-between space-y-3">
+          <div>
+            <h3 className="text-foreground font-extrabold text-sm mb-1">Growth Operating System Status</h3>
+            <p className="text-[11px] text-muted-foreground">Comprehensive system audit.</p>
+          </div>
+
+          <div className="divide-y divide-border/30 space-y-2 pt-1 text-xs">
+            <div className="flex justify-between items-center pt-2">
+              <span className="text-muted-foreground font-bold">Active Growth Plans</span>
+              <span className="text-foreground font-extrabold bg-primary/10 text-primary px-2 py-0.5 rounded-md">{growthPlans.length} Plans</span>
+            </div>
+            <div className="flex justify-between items-center pt-2">
+              <span className="text-muted-foreground font-bold">Total Tasks Created</span>
+              <span className="text-foreground font-extrabold">{tasks.length} ({completedTasksCount} done)</span>
+            </div>
+            <div className="flex justify-between items-center pt-2">
+              <span className="text-muted-foreground font-bold">Focus Stopwatch Sessions</span>
+              <span className="text-foreground font-extrabold">{focusSessions.length} logged</span>
+            </div>
+            <div className="flex justify-between items-center pt-2">
+              <span className="text-muted-foreground font-bold">Reflections & Notes</span>
+              <span className="text-foreground font-extrabold">{journals.length + notes.length} entries</span>
+            </div>
+            <div className="flex justify-between items-center pt-2">
+              <span className="text-muted-foreground font-bold">Health Score Avg</span>
+              <span className="text-emerald-600 dark:text-emerald-400 font-extrabold">{user?.healthScore || 85}/100</span>
+            </div>
+            <div className="flex justify-between items-center pt-2">
+              <span className="text-muted-foreground font-bold">Career Score Avg</span>
+              <span className="text-purple-600 dark:text-purple-400 font-extrabold">{user?.careerScore || 80}/100</span>
+            </div>
+          </div>
+        </Card>
+
       </div>
     </div>
   );

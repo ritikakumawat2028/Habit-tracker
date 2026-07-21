@@ -1,13 +1,13 @@
 import { Router, Request, Response, NextFunction } from 'express';
-import { User, Task, Note, Habit, FriendConnection } from './models';
+import { User, Task, Note, Habit, GrowthPlan, FriendConnection } from './models';
 import mongoose from 'mongoose';
 
 const router = Router();
 
-/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+/* â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• 
    AUTH MIDDLEWARE
    userId is sent as Bearer token (MongoDB ObjectId)
-   â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
+   â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â•  */
 const requireAuth = (req: Request, res: Response, next: NextFunction) => {
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -21,10 +21,10 @@ const requireAuth = (req: Request, res: Response, next: NextFunction) => {
   next();
 };
 
-/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+/* â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• 
    HELPER: build a partner response object from a User document
    Computes real stats from their habits & tasks in the DB
-   â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
+   â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â•  */
 async function buildPartnerPayload(friendUser: any, connectionId: string) {
   const fid = friendUser._id || friendUser.id;
 
@@ -56,8 +56,8 @@ async function buildPartnerPayload(friendUser: any, connectionId: string) {
     longestStreak: friendUser.longestStreak || friendUser.streak || 0,
     status: 'online' as const,
     inviteCode: friendUser.inviteCode,
-    habits: habits.map(h => ({ name: h.name, icon: h.icon, done: h.completedToday, streak: h.streak })),
-    tasks: tasks.slice(0, 5).map(t => ({ title: t.title, done: t.done, priority: t.priority })),
+    habits: habits.map(h => ({ name: h.name, icon: h.icon, done: h.completedToday, streak: h.streak, consistencyScore: h.consistencyScore || 100 })),
+    tasks: tasks.slice(0, 10).map(t => ({ title: t.title, done: t.done, priority: t.priority, difficulty: t.difficulty || 'Medium' })),
     weekProgress,
     // Extended stats from user's self-reported fields
     healthScore: friendUser.healthScore || 50,
@@ -71,7 +71,7 @@ async function buildPartnerPayload(friendUser: any, connectionId: string) {
     exercise: friendUser.exercise || 0,
     currentChallenge: friendUser.currentChallenge || 'None',
     currentRank: friendUser.currentRank || 'Bronze I',
-    mood: friendUser.mood || 'ðŸ˜ Okay',
+    mood: friendUser.mood || '😐 Okay',
     habitCompletion,
     taskCompletion,
     completedTasks: doneTasks,
@@ -133,9 +133,75 @@ router.put('/auth/profile', requireAuth, async (req: Request, res: Response) => 
   }
 });
 
-/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-   USER SEARCH â€” find user by invite code (for preview)
-   â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
+/* ══════════════════════════════════════════
+   GROWTH PLANS ENDPOINTS
+   ══════════════════════════════════════════ */
+router.get('/plans', requireAuth, async (req: Request, res: Response) => {
+  try {
+    const plans = await GrowthPlan.find({ userId: (req as any).userId });
+    res.json(plans);
+  } catch (error) {
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+router.post('/plans', requireAuth, async (req: Request, res: Response) => {
+  try {
+    const { title, category, description, targetDate, progress, active } = req.body;
+    if (!title) return res.status(400).json({ error: 'Title is required' });
+
+    // If marked active, deactivate other plans for this user
+    if (active) {
+      await GrowthPlan.updateMany({ userId: (req as any).userId }, { active: false });
+    }
+
+    const newPlan = new GrowthPlan({
+      userId: (req as any).userId,
+      title,
+      category: category || 'Career',
+      description: description || '',
+      targetDate: targetDate || new Date(Date.now() + 90 * 86400000).toISOString().split('T')[0],
+      progress: progress || 0,
+      active: active !== undefined ? active : true,
+      createdAt: new Date().toISOString().split('T')[0],
+    });
+    await newPlan.save();
+    res.status(201).json(newPlan);
+  } catch (error) {
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+router.put('/plans/:id', requireAuth, async (req: Request, res: Response) => {
+  try {
+    if (req.body.active) {
+      await GrowthPlan.updateMany({ userId: (req as any).userId }, { active: false });
+    }
+    const plan = await GrowthPlan.findOneAndUpdate(
+      { _id: req.params.id, userId: (req as any).userId },
+      req.body,
+      { new: true }
+    );
+    if (!plan) return res.status(404).json({ error: 'Growth plan not found' });
+    res.json(plan);
+  } catch (error) {
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+router.delete('/plans/:id', requireAuth, async (req: Request, res: Response) => {
+  try {
+    const plan = await GrowthPlan.findOneAndDelete({ _id: req.params.id, userId: (req as any).userId });
+    if (!plan) return res.status(404).json({ error: 'Growth plan not found' });
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+/* ══════════════════════════════════════════
+   USER SEARCH — find user by invite code (for preview)
+   ══════════════════════════════════════════ */
 router.get('/users/search', requireAuth, async (req: Request, res: Response) => {
   try {
     const code = (req.query.code as string || '').toUpperCase().trim();
@@ -164,9 +230,9 @@ router.get('/users/search', requireAuth, async (req: Request, res: Response) => 
   }
 });
 
-/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+/* ══════════════════════════════════════════
    TASKS ENDPOINTS
-   â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
+   ══════════════════════════════════════════ */
 router.get('/tasks', requireAuth, async (req: Request, res: Response) => {
   try {
     const tasks = await Task.find({ userId: (req as any).userId });
@@ -178,7 +244,7 @@ router.get('/tasks', requireAuth, async (req: Request, res: Response) => {
 
 router.post('/tasks', requireAuth, async (req: Request, res: Response) => {
   try {
-    const { title, note, category, priority, dueDate, dueTime, estimatedDuration, reminder, tags, recurring } = req.body;
+    const { title, note, category, priority, dueDate, dueTime, estimatedDuration, reminder, tags, recurring, difficulty, subtasks, dependencies, planId } = req.body;
     if (!title) return res.status(400).json({ error: 'Title is required' });
 
     const newTask = new Task({
@@ -190,7 +256,11 @@ router.post('/tasks', requireAuth, async (req: Request, res: Response) => {
       done: false,
       dueDate: dueDate || new Date().toISOString().split('T')[0],
       createdAt: new Date().toISOString().split('T')[0],
-      dueTime, estimatedDuration, reminder, tags, recurring
+      dueTime, estimatedDuration, reminder, tags, recurring,
+      difficulty: difficulty || 'Medium',
+      subtasks: subtasks || [],
+      dependencies: dependencies || [],
+      planId
     });
     await newTask.save();
     res.status(201).json(newTask);
@@ -223,9 +293,9 @@ router.delete('/tasks/:id', requireAuth, async (req: Request, res: Response) => 
   }
 });
 
-/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+/* ══════════════════════════════════════════
    NOTES ENDPOINTS
-   â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
+   ══════════════════════════════════════════ */
 router.get('/notes', requireAuth, async (req: Request, res: Response) => {
   try {
     const notes = await Note.find({ userId: (req as any).userId });
@@ -237,7 +307,7 @@ router.get('/notes', requireAuth, async (req: Request, res: Response) => {
 
 router.post('/notes', requireAuth, async (req: Request, res: Response) => {
   try {
-    const { title, body, color, pinned } = req.body;
+    const { title, body, color, pinned, folder, planId } = req.body;
     if (!title && !body) return res.status(400).json({ error: 'Title or body is required' });
 
     const newNote = new Note({
@@ -247,6 +317,8 @@ router.post('/notes', requireAuth, async (req: Request, res: Response) => {
       color: color || 'violet',
       pinned: pinned || false,
       createdAt: new Date().toISOString().split('T')[0],
+      folder: folder || 'General',
+      planId
     });
     await newNote.save();
     res.status(201).json(newNote);
@@ -279,9 +351,9 @@ router.delete('/notes/:id', requireAuth, async (req: Request, res: Response) => 
   }
 });
 
-/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+/* ══════════════════════════════════════════
    HABITS ENDPOINTS
-   â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
+   ══════════════════════════════════════════ */
 router.get('/habits', requireAuth, async (req: Request, res: Response) => {
   try {
     const habits = await Habit.find({ userId: (req as any).userId });
@@ -293,19 +365,26 @@ router.get('/habits', requireAuth, async (req: Request, res: Response) => {
 
 router.post('/habits', requireAuth, async (req: Request, res: Response) => {
   try {
-    const { name, category, icon, priority, freq, target } = req.body;
+    const { name, category, icon, priority, freq, target, consistencyScore, history, paused, archived, notes, planId } = req.body;
     if (!name) return res.status(400).json({ error: 'Name is required' });
 
     const newHabit = new Habit({
       userId: (req as any).userId,
       name,
       category: category || 'Fitness',
-      icon: icon || 'ðŸƒ',
+      icon: icon || '🏃',
       priority: priority || 'medium',
       freq: freq || 'Daily',
       streak: 0,
+      longestStreak: 0,
       target: target || '1 time',
       completedToday: false,
+      consistencyScore: consistencyScore !== undefined ? consistencyScore : 100,
+      history: history || [],
+      paused: paused || false,
+      archived: archived || false,
+      notes: notes || '',
+      planId
     });
     await newHabit.save();
     res.status(201).json(newHabit);

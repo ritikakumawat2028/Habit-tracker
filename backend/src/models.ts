@@ -67,7 +67,7 @@ const UserSchema = new Schema<IUser>({
 }, { timestamps: true });
 
 // Auto-assign a unique invite code before first save
-UserSchema.pre('save', async function (next) {
+UserSchema.pre('save', async function () {
   if (!this.inviteCode) {
     const UserModel = this.constructor as mongoose.Model<IUser>;
     let code = makeInviteCode();
@@ -76,12 +76,11 @@ UserSchema.pre('save', async function (next) {
     }
     this.inviteCode = code;
   }
-  next();
 });
 
 UserSchema.set('toJSON', {
   virtuals: true,
-  transform: (doc, ret) => {
+  transform: (doc: any, ret: any) => {
     ret.id = ret._id;
     delete ret._id;
     delete ret.__v;
@@ -107,6 +106,10 @@ export interface ITask extends Document {
   reminder?: boolean;
   tags?: string;
   recurring?: 'none' | 'daily' | 'weekly' | 'monthly';
+  difficulty?: 'Easy' | 'Medium' | 'Hard';
+  subtasks?: { id: string; title: string; done: boolean }[];
+  dependencies?: string[];
+  planId?: string;
 }
 
 const TaskSchema = new Schema<ITask>({
@@ -122,12 +125,16 @@ const TaskSchema = new Schema<ITask>({
   estimatedDuration: { type: String },
   reminder: { type: Boolean },
   tags: { type: String },
-  recurring: { type: String, enum: ['none', 'daily', 'weekly', 'monthly'] }
+  recurring: { type: String, enum: ['none', 'daily', 'weekly', 'monthly'] },
+  difficulty: { type: String, enum: ['Easy', 'Medium', 'Hard'], default: 'Medium' },
+  subtasks: { type: [{ id: String, title: String, done: Boolean }], default: [] },
+  dependencies: { type: [String], default: [] },
+  planId: { type: String }
 });
 
 TaskSchema.set('toJSON', {
   virtuals: true,
-  transform: (doc, ret) => { ret.id = ret._id; delete ret._id; delete ret.__v; }
+  transform: (doc: any, ret: any) => { ret.id = ret._id; delete ret._id; delete ret.__v; }
 });
 export const Task = mongoose.model<ITask>('Task', TaskSchema);
 
@@ -141,6 +148,8 @@ export interface INote extends Document {
   color: string;
   pinned: boolean;
   createdAt: string;
+  folder?: string;
+  planId?: string;
 }
 
 const NoteSchema = new Schema<INote>({
@@ -149,12 +158,14 @@ const NoteSchema = new Schema<INote>({
   body: { type: String, default: '' },
   color: { type: String, default: 'violet' },
   pinned: { type: Boolean, default: false },
-  createdAt: { type: String, required: true }
+  createdAt: { type: String, required: true },
+  folder: { type: String, default: 'General' },
+  planId: { type: String }
 });
 
 NoteSchema.set('toJSON', {
   virtuals: true,
-  transform: (doc, ret) => { ret.id = ret._id; delete ret._id; delete ret.__v; }
+  transform: (doc: any, ret: any) => { ret.id = ret._id; delete ret._id; delete ret.__v; }
 });
 export const Note = mongoose.model<INote>('Note', NoteSchema);
 
@@ -169,8 +180,15 @@ export interface IHabit extends Document {
   priority: 'high' | 'medium' | 'low';
   freq: string;
   streak: number;
+  longestStreak?: number;
   target: string;
   completedToday: boolean;
+  consistencyScore?: number;
+  history?: string[];
+  paused?: boolean;
+  archived?: boolean;
+  notes?: string;
+  planId?: string;
 }
 
 const HabitSchema = new Schema<IHabit>({
@@ -181,15 +199,53 @@ const HabitSchema = new Schema<IHabit>({
   priority: { type: String, enum: ['high', 'medium', 'low'], default: 'medium' },
   freq: { type: String, default: 'Daily' },
   streak: { type: Number, default: 0 },
+  longestStreak: { type: Number, default: 0 },
   target: { type: String, default: '1 time' },
-  completedToday: { type: Boolean, default: false }
+  completedToday: { type: Boolean, default: false },
+  consistencyScore: { type: Number, default: 100 },
+  history: { type: [String], default: [] },
+  paused: { type: Boolean, default: false },
+  archived: { type: Boolean, default: false },
+  notes: { type: String, default: '' },
+  planId: { type: String }
 });
 
 HabitSchema.set('toJSON', {
   virtuals: true,
-  transform: (doc, ret) => { ret.id = ret._id; delete ret._id; delete ret.__v; }
+  transform: (doc: any, ret: any) => { ret.id = ret._id; delete ret._id; delete ret.__v; }
 });
 export const Habit = mongoose.model<IHabit>('Habit', HabitSchema);
+
+/* ══════════════════════════════════════════
+   GROWTH PLAN MODEL
+   ══════════════════════════════════════════ */
+export interface IGrowthPlan extends Document {
+  userId: mongoose.Types.ObjectId;
+  title: string;
+  category: string;
+  description: string;
+  targetDate: string;
+  progress: number;
+  active: boolean;
+  createdAt: string;
+}
+
+const GrowthPlanSchema = new Schema<IGrowthPlan>({
+  userId: { type: Schema.Types.ObjectId, ref: 'User', required: true },
+  title: { type: String, required: true },
+  category: { type: String, default: 'Career' },
+  description: { type: String, default: '' },
+  targetDate: { type: String, required: true },
+  progress: { type: Number, default: 0 },
+  active: { type: Boolean, default: true },
+  createdAt: { type: String, required: true }
+});
+
+GrowthPlanSchema.set('toJSON', {
+  virtuals: true,
+  transform: (doc: any, ret: any) => { ret.id = ret._id; delete ret._id; delete ret.__v; }
+});
+export const GrowthPlan = mongoose.model<IGrowthPlan>('GrowthPlan', GrowthPlanSchema);
 
 /* ══════════════════════════════════════════
    FRIEND CONNECTION MODEL
@@ -216,6 +272,6 @@ FriendConnectionSchema.index({ userId: 1, friendUserId: 1 }, { unique: true });
 
 FriendConnectionSchema.set('toJSON', {
   virtuals: true,
-  transform: (doc, ret) => { ret.id = ret._id; delete ret._id; delete ret.__v; }
+  transform: (doc: any, ret: any) => { ret.id = ret._id; delete ret._id; delete ret.__v; }
 });
 export const FriendConnection = mongoose.model<IFriendConnection>('FriendConnection', FriendConnectionSchema);
