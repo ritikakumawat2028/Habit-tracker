@@ -22,7 +22,7 @@ import {
    API LAYER (connects to Express backend)
    Falls back to localStorage if offline
 ══════════════════════════════════════════ */
-const API_URL = "http://localhost:5000/api";
+const API_URL = import.meta.env.VITE_API_URL || "https://habit-tracker-backend-u7o8.onrender.com/api";
 
 async function apiFetch<T>(path: string, options?: RequestInit): Promise<T | null> {
   try {
