@@ -15,7 +15,7 @@ import {
   Target, Clock, HelpCircle, Sun, StickyNote, ListTodo,
   LogOut, Camera, Save, Link2, Copy, Shield, Trophy, Send,
   User, Edit3, AlertCircle, RefreshCw, Minus, Award, Folder,
-  Pause, Archive, PlusCircle, FileText
+  Pause, Archive, PlusCircle, FileText, Menu
 } from "lucide-react";
 
 /* ══════════════════════════════════════════
@@ -1266,7 +1266,7 @@ function LandingPage({ onNavigate }: { onNavigate: (v: View) => void }) {
             {user ? "Go to Dashboard" : "Start Growing Free"} <ArrowRight size={18} />
           </Btn>
         </div>
-        <div className="mt-16 grid grid-cols-3 gap-16">
+        <div className="mt-16 grid grid-cols-1 md:grid-cols-3 gap-16">
           {[["47k+", "Active Growers"], ["2.3M", "Habits Tracked"], ["94%", "Streak Rate"]].map(([n, l]) => (
             <div key={l} className="flex flex-col items-center">
               <span className="font-['Plus_Jakarta_Sans'] text-3xl font-extrabold bg-gradient-to-r from-violet-500 to-pink-500 bg-clip-text text-transparent">{n}</span>
@@ -1566,22 +1566,30 @@ function Sidebar({ active, onNavigate }: { active: View; onNavigate: (v: View) =
 /* ══════════════════════════════════════════
    TOP BAR
  ══════════════════════════════════════════ */
-function TopBar({ onNavigate, onQuickAdd }: { onNavigate: (v: View) => void; onQuickAdd: () => void }) {
+function TopBar({ onNavigate, onQuickAdd, onToggleMenu }: { onNavigate: (v: View) => void; onQuickAdd: () => void; onToggleMenu?: () => void }) {
   const { user } = useAuth();
   const [showNotifs, setShowNotifs] = useState(false);
   
   if (!user) return null;
   return (
-    <div className="flex items-center justify-between px-7 py-3 bg-[#5B3765] dark:bg-[#1e1124] border-b border-[#5B3765]/10 text-white sticky top-0 z-20 flex-shrink-0 font-['Poppins'] shadow-md select-none">
-      <div className="flex flex-col">
-        <span className="text-[10px] font-bold text-white/50 tracking-wider uppercase">Welcome back</span>
-        <h2 className="text-white font-extrabold text-base tracking-tight flex items-center gap-1.5 mt-0.5">
-          Good Morning, {user.name.split(" ")[0]} 👋
-        </h2>
+    <div className="flex items-center justify-between px-4 md:px-7 py-3 bg-[#5B3765] dark:bg-[#1e1124] border-b border-[#5B3765]/10 text-white sticky top-0 z-20 flex-shrink-0 font-['Poppins'] shadow-md select-none">
+      
+      <div className="flex items-center gap-3">
+        {onToggleMenu && (
+          <button onClick={onToggleMenu} className="md:hidden w-8 h-8 flex items-center justify-center rounded-full bg-white/10 hover:bg-white/20 text-white transition-all">
+            <Menu size={18} />
+          </button>
+        )}
+        <div className="flex flex-col">
+          <span className="hidden md:inline-block text-[10px] font-bold text-white/50 tracking-wider uppercase">Welcome back</span>
+          <h2 className="text-white font-extrabold text-sm md:text-base tracking-tight flex items-center gap-1.5 mt-0.5">
+            Good Morning, {user.name.split(" ")[0]} 👋
+          </h2>
+        </div>
       </div>
 
       {/* Search and Action items */}
-      <div className="flex items-center gap-4 flex-1 max-w-md mx-8">
+      <div className="hidden sm:flex items-center gap-4 flex-1 max-w-md mx-4 md:mx-8">
         <div className="relative w-full">
           <Search size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-white/40" />
           <input
@@ -1853,7 +1861,7 @@ export function DashboardView({ onNavigate, onQuickAdd }: { onNavigate: (v: View
     <div className="flex h-full overflow-hidden text-foreground">
       
       {/* ── CENTER MAIN CONTENT COLUMN ── */}
-      <div className="flex-1 overflow-y-auto px-7 py-6 space-y-6 min-w-0 bg-background">
+      <div className="flex-1 overflow-y-auto px-4 md:px-7 py-4 md:py-6 space-y-6 min-w-0 bg-background">
         
         {/* ROW 1: Active Growth Plan Command Banner & Switcher */}
         {activePlan && (
@@ -2578,7 +2586,7 @@ export function TasksView() {
   }, [filteredTasks]);
 
   return (
-    <div className="p-7 space-y-6 text-foreground font-['Plus_Jakarta_Sans']">
+    <div className="p-4 md:p-7 space-y-6 text-foreground font-['Plus_Jakarta_Sans']">
       
       {/* Subheader and Tab Selectors */}
       <div className="flex justify-between items-center border-b border-border pb-4 flex-wrap gap-4">
@@ -3260,7 +3268,7 @@ export function FriendsView() {
   };
 
   return (
-    <div className="p-7 space-y-6 text-foreground font-['Plus_Jakarta_Sans']">
+    <div className="p-4 md:p-7 space-y-6 text-foreground font-['Plus_Jakarta_Sans']">
       
       {/* HEADER SECTION: Switch connected accountability partners */}
       <div className="flex justify-between items-center border-b border-border/60 pb-4 flex-wrap gap-4">
@@ -3936,7 +3944,7 @@ export function ProfileView({ onNavigate }: { onNavigate: (v: View) => void }) {
   const goalLabels: Record<string, string> = { fitness: "Fitness 🏃", reading: "Reading 📚", career: "Career", coding: "Coding 💻", hydration: "Hydration 💧", sleep: "Sleep 🌙", mental: "Mental Wellness", selfcare: "Self Care", health: "Health ❤️", productivity: "Productivity" };
 
   return (
-    <div className="p-7 max-w-3xl space-y-6">
+    <div className="p-4 md:p-7 max-w-3xl space-y-6">
       <div className="flex items-center justify-between">
         <h2 className="text-foreground font-extrabold text-xl font-['Plus_Jakarta_Sans']">My Profile</h2>
         {saved && <span className="text-emerald-400 text-sm flex items-center gap-1"><Check size={14} /> Saved!</span>}
@@ -4118,7 +4126,7 @@ export function HabitsView() {
   const chartData = habits.filter(h => !h.archived).map(h => ({ name: h.name, streak: h.streak, longest: h.longestStreak || h.streak }));
 
   return (
-    <div className="p-7 space-y-6 font-['Plus_Jakarta_Sans'] text-foreground">
+    <div className="p-4 md:p-7 space-y-6 font-['Plus_Jakarta_Sans'] text-foreground">
       
       {/* Subheader and Action buttons */}
       <div className="flex justify-between items-center border-b border-border pb-4 flex-wrap gap-4">
@@ -4399,7 +4407,7 @@ export function HealthView() {
   };
 
   return (
-    <div className="p-7 space-y-6 max-w-4xl mx-auto font-['Poppins']">
+    <div className="p-4 md:p-7 space-y-6 max-w-4xl mx-auto font-['Poppins']">
       <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
         <Card className="p-5 flex flex-col justify-between">
           <div>
@@ -4559,7 +4567,7 @@ export function CareerView() {
   const commitColors = ["bg-muted/30 dark:bg-muted/15", "bg-[#F3CCDE]", "bg-[#BA88AE]", "bg-[#5B3765]"];
 
   return (
-    <div className="p-7 space-y-6 max-w-4xl mx-auto text-foreground font-['Poppins']">
+    <div className="p-4 md:p-7 space-y-6 max-w-4xl mx-auto text-foreground font-['Poppins']">
       {/* Header */}
       <Card className="p-5 border-primary/30 bg-gradient-to-r from-primary/10 to-indigo-500/10 flex justify-between items-center gap-4 flex-wrap">
         <div>
@@ -4832,7 +4840,7 @@ export function FocusView() {
   };
 
   return (
-    <div className="p-7 space-y-6 max-w-4xl mx-auto text-foreground font-['Poppins']">
+    <div className="p-4 md:p-7 space-y-6 max-w-4xl mx-auto text-foreground font-['Poppins']">
       <Card className="p-8 text-center space-y-5">
         <span className="text-[10px] uppercase font-extrabold tracking-widest text-primary">Focus Session Timer</span>
         <div className="text-6xl font-extrabold text-primary tracking-wider">{format(timeLeft)}</div>
@@ -4921,7 +4929,7 @@ export function GoalsView() {
   };
 
   return (
-    <div className="p-7 space-y-6 max-w-4xl mx-auto text-foreground font-['Poppins']">
+    <div className="p-4 md:p-7 space-y-6 max-w-4xl mx-auto text-foreground font-['Poppins']">
       {/* Vision Board Cards Deck */}
       <Card className="p-5 bg-gradient-to-r from-violet-500/5 to-pink-500/5 border-dashed border-primary/20">
         <h3 className="text-xs font-extrabold text-primary uppercase tracking-widest mb-2">My vision board</h3>
@@ -5011,7 +5019,7 @@ export function LearningView() {
   };
 
   return (
-    <div className="p-7 space-y-6 max-w-4xl mx-auto text-foreground font-['Poppins']">
+    <div className="p-4 md:p-7 space-y-6 max-w-4xl mx-auto text-foreground font-['Poppins']">
       {/* Header Banner */}
       <Card className="p-5 border-primary/30 bg-gradient-to-r from-primary/10 to-purple-500/10 flex justify-between items-center gap-4 flex-wrap">
         <div>
@@ -5253,7 +5261,7 @@ export function JournalView() {
   const allFolderNames = ["all", ...customFolders];
 
   return (
-    <div className="p-7 space-y-6 max-w-5xl mx-auto text-foreground font-['Plus_Jakarta_Sans']">
+    <div className="p-4 md:p-7 space-y-6 max-w-5xl mx-auto text-foreground font-['Plus_Jakarta_Sans']">
       
       {/* HEADER & TOP CONTROL BAR */}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 border-b border-border/60 pb-4">
@@ -5745,7 +5753,7 @@ export function TimeTrackerView() {
   const totalMinutes = focusSessions.reduce((acc, curr) => acc + curr.duration, 0);
 
   return (
-    <div className="p-7 space-y-6 max-w-4xl mx-auto text-foreground font-['Poppins']">
+    <div className="p-4 md:p-7 space-y-6 max-w-4xl mx-auto text-foreground font-['Poppins']">
       <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
         <Card className="p-5 flex flex-col justify-between md:col-span-2 bg-gradient-to-br from-primary/5 to-accent/5">
           <div>
@@ -5893,7 +5901,7 @@ export function AchievementsView() {
   };
 
   return (
-    <div className="p-7 space-y-6 max-w-5xl mx-auto text-foreground font-['Plus_Jakarta_Sans']">
+    <div className="p-4 md:p-7 space-y-6 max-w-5xl mx-auto text-foreground font-['Plus_Jakarta_Sans']">
       
       {/* HEADER & LEVEL STATUS BANNER */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
@@ -6128,7 +6136,7 @@ export function AnalyticsView() {
   ];
 
   return (
-    <div className="p-7 space-y-6 max-w-6xl mx-auto text-foreground font-['Plus_Jakarta_Sans']">
+    <div className="p-4 md:p-7 space-y-6 max-w-6xl mx-auto text-foreground font-['Plus_Jakarta_Sans']">
       
       {/* HEADER BANNER */}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 border-b border-border/60 pb-4">
@@ -6309,7 +6317,7 @@ export function ChallengesView() {
     { id: 6, name: "Mindfulness Journey", icon: "🧘", participants: 1876, duration: "21 days", xp: 550, difficulty: "Medium", desc: "Meditate for at least 10 minutes daily and journal your thoughts." },
   ];
   return (
-    <div className="p-7"><div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+    <div className="p-4 md:p-7"><div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
       {challenges.map(c => {
         const isJoined = joined.includes(c.id);
         return (
@@ -6487,16 +6495,28 @@ function QuickAddTaskModal({ onClose }: { onClose: () => void }) {
 function AppShell({ onNavigate }: { onNavigate: (v: View) => void }) {
   const [view, setView] = useState<View>("dashboard");
   const [showQuickAdd, setShowQuickAdd] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const navigate = (v: View) => {
     if (["landing", "login", "onboarding"].includes(v)) { onNavigate(v); return; }
     setView(v);
+    setMobileMenuOpen(false); // Auto-close menu on navigate
   };
   return (
     <div className="flex h-screen overflow-hidden bg-background">
-      <Sidebar active={view} onNavigate={navigate} />
+      {/* Sidebar: hidden on mobile unless toggled open */}
+      <div className={`md:flex ${mobileMenuOpen ? "fixed inset-0 z-50 flex" : "hidden"} md:relative z-40`}>
+        {/* Overlay for mobile to close sidebar */}
+        {mobileMenuOpen && (
+          <div className="fixed inset-0 bg-black/50 md:hidden z-30" onClick={() => setMobileMenuOpen(false)} />
+        )}
+        <div className="relative z-40 bg-sidebar shadow-2xl md:shadow-none h-full w-[240px]">
+          <Sidebar active={view} onNavigate={navigate} />
+        </div>
+      </div>
+      
       <div className="flex-1 flex flex-col overflow-hidden min-w-0">
-        <TopBar onNavigate={navigate} onQuickAdd={() => setShowQuickAdd(true)} />
+        <TopBar onNavigate={navigate} onQuickAdd={() => setShowQuickAdd(true)} onToggleMenu={() => setMobileMenuOpen(true)} />
         <main className="flex-1 overflow-y-auto">
           {view === "dashboard" && <DashboardView onNavigate={navigate} onQuickAdd={() => setShowQuickAdd(true)} />}
           {view === "tasks" && <TasksView />}
