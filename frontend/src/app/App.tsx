@@ -304,7 +304,7 @@ export const AuthCtx = createContext<{
   updateJournal: (id: string, patch: Partial<JournalEntry>) => void;
   deleteJournal: (id: string) => void;
   focusSessions: FocusSession[];
-  addFocusSession: (s: Omit<FocusSession, "id" | "date">) => void;
+  addFocusSession: (s: Omit<FocusSession, "id"> & { date?: string }) => void;
   missions: DailyMission[];
   toggleMission: (id: string) => void;
   rewards: RewardItem[];
@@ -1052,8 +1052,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     });
   }, [persist]);
 
-  const addFocusSession = useCallback((s: Omit<FocusSession, "id" | "date">) => {
-    const nextSession = { ...s, id: `f_${Date.now()}`, date: new Date().toISOString().split("T")[0] };
+  const addFocusSession = useCallback((s: Omit<FocusSession, "id"> & { date?: string }) => {
+    const nextSession = { ...s, id: `f_${Date.now()}`, date: s.date || new Date().toISOString().split("T")[0] };
     setFocusSessions(prev => {
       const next = [nextSession, ...prev];
       persist("gs_focus", next);
@@ -4466,13 +4466,24 @@ export function HealthView() {
 }
 
 export function CareerView() {
-  const { careerApps, addCareerApp, updateCareerAppStage, deleteCareerApp, focusSessions } = useAuth();
+  const { careerApps, addCareerApp, updateCareerAppStage, deleteCareerApp, focusSessions, addFocusSession } = useAuth();
   const [showAddModal, setShowAddModal] = useState(false);
   const [company, setCompany] = useState("");
   const [role, setRole] = useState("");
   const [stage, setStage] = useState("Applied");
   const [date, setDate] = useState("");
   const [notes, setNotes] = useState("");
+
+  const [showLogSession, setShowLogSession] = useState(false);
+  const [logMins, setLogMins] = useState(30);
+  const [logCat, setLogCat] = useState("Coding");
+  const [logDate, setLogDate] = useState(new Date().toISOString().split("T")[0]);
+
+  const handleManualLog = () => {
+    addFocusSession({ duration: logMins, category: logCat, date: logDate });
+    setShowLogSession(false);
+    setLogMins(30);
+  };
 
   // User-managed skills — stored in localStorage
   const [skills, setSkills] = useState<{ name: string; level: number }[]>(() => {
@@ -4513,19 +4524,29 @@ export function CareerView() {
   const careerReadiness = totalApps === 0 ? 0 : Math.min(100, Math.round(((offers * 30 + codingSessions * 2 + Number(totalStudyHrs)) / (totalApps * 5 + 50)) * 100));
 
   // Real activity grid — last 140 days of focus sessions
-  const sessionDateMap = new Map<string, number>();
+  const sessionDateMap = new Map<string, { count: number, mins: number }>();
   focusSessions.forEach(s => {
-    if (s.date) sessionDateMap.set(s.date, (sessionDateMap.get(s.date) || 0) + 1);
+    if (s.date) {
+      const prev = sessionDateMap.get(s.date) || { count: 0, mins: 0 };
+      sessionDateMap.set(s.date, { count: prev.count + 1, mins: prev.mins + (s.duration || 0) });
+    }
   });
   const activityGrid = Array.from({ length: 140 }, (_, i) => {
     const d = new Date();
     d.setDate(d.getDate() - (139 - i));
     const dateStr = d.toISOString().split("T")[0];
-    const count = sessionDateMap.get(dateStr) || 0;
-    const level = count === 0 ? 0 : count === 1 ? 1 : count <= 3 ? 2 : 3;
-    return { id: i, level, dateStr, count };
+    const data = sessionDateMap.get(dateStr) || { count: 0, mins: 0 };
+    let level = 0;
+    if (data.mins > 0) {
+      if (data.mins < 30) level = 1;
+      else if (data.mins < 90) level = 2;
+      else level = 3;
+    }
+    return { id: i, level, dateStr, ...data };
   });
   const totalContributions = focusSessions.length;
+  const totalGridMins = activityGrid.reduce((sum, item) => sum + item.mins, 0);
+  const totalGridHrs = (totalGridMins / 60).toFixed(1);
 
   const commitColors = ["bg-muted/30 dark:bg-muted/15", "bg-[#F3CCDE]", "bg-[#BA88AE]", "bg-[#5B3765]"];
 
@@ -4612,19 +4633,51 @@ export function CareerView() {
 
       {/* Real Focus Activity Grid */}
       <Card className="p-5 border-border bg-card shadow-sm space-y-3">
-        <div className="flex justify-between items-center">
+        <div className="flex justify-between items-start flex-wrap gap-2">
           <div>
             <h4 className="text-xs font-extrabold text-foreground/40 uppercase tracking-widest">Focus Session Activity</h4>
             <p className="text-xs text-foreground/50 mt-0.5">Real study sessions logged on GrowSync — last 140 days</p>
           </div>
-          <span className="text-[10px] text-primary font-bold">{totalContributions} total sessions</span>
+          <div className="flex flex-col items-end gap-2">
+            <span className="text-[10px] text-primary font-bold">{totalContributions} sessions ({totalGridHrs}h)</span>
+            <Btn onClick={() => setShowLogSession(v => !v)} variant="outline" className="text-[10px] py-1 px-2 border-primary/40 text-primary">+ Log Manual</Btn>
+          </div>
         </div>
+
+        {showLogSession && (
+          <div className="border border-border/50 rounded-xl p-3 bg-muted/20 animate-fadeIn mb-3">
+            <h5 className="text-xs font-bold text-foreground/80 mb-2">Log Manual Focus Session</h5>
+            <div className="grid grid-cols-3 gap-3 mb-3">
+              <div>
+                <label className="block text-[10px] font-bold text-foreground/60 mb-1">Duration (mins)</label>
+                <input type="number" min="5" value={logMins} onChange={e => setLogMins(Number(e.target.value))} className="w-full bg-background border border-border rounded-md px-2 py-1.5 text-xs focus:border-primary outline-none" />
+              </div>
+              <div>
+                <label className="block text-[10px] font-bold text-foreground/60 mb-1">Category</label>
+                <select value={logCat} onChange={e => setLogCat(e.target.value)} className="w-full bg-background border border-border rounded-md px-2 py-1.5 text-xs focus:border-primary outline-none">
+                  <option value="Coding">Coding</option>
+                  <option value="Reading">Reading</option>
+                  <option value="Planning">Planning</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-[10px] font-bold text-foreground/60 mb-1">Date</label>
+                <input type="date" value={logDate} onChange={e => setLogDate(e.target.value)} className="w-full bg-background border border-border rounded-md px-2 py-1.5 text-xs focus:border-primary outline-none" />
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <Btn onClick={handleManualLog} className="flex-1 text-[10px] py-1">Save Session</Btn>
+              <Btn onClick={() => setShowLogSession(false)} variant="ghost" className="flex-1 text-[10px] py-1">Cancel</Btn>
+            </div>
+          </div>
+        )}
+
         <div className="flex flex-wrap gap-1 items-center py-2 max-w-full overflow-x-auto">
           {activityGrid.map(cell => (
             <div
               key={cell.id}
               className={`w-3.5 h-3.5 rounded-sm transition-all hover:scale-110 ${commitColors[cell.level]}`}
-              title={`${cell.dateStr}: ${cell.count} session${cell.count !== 1 ? "s" : ""}`}
+              title={`${cell.dateStr}: ${cell.mins} mins across ${cell.count} session(s)`}
             />
           ))}
         </div>
