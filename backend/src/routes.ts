@@ -1,6 +1,7 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { User, Task, Note, Habit, GrowthPlan, FriendConnection } from './models';
 import mongoose from 'mongoose';
+import { io } from './server';
 
 const router = Router();
 
@@ -271,12 +272,34 @@ router.post('/tasks', requireAuth, async (req: Request, res: Response) => {
 
 router.put('/tasks/:id', requireAuth, async (req: Request, res: Response) => {
   try {
+    const userId = (req as any).userId;
     const task = await Task.findOneAndUpdate(
-      { _id: req.params.id, userId: (req as any).userId },
+      { _id: req.params.id, userId },
       req.body,
       { new: true }
     );
     if (!task) return res.status(404).json({ error: 'Task not found' });
+
+    // Emit activity if task is marked done
+    if (req.body.done === true) {
+      import('./models').then(async ({ ActivityFeed, User, FriendConnection }) => {
+        const user = await User.findById(userId);
+        if (user) {
+          const act = await ActivityFeed.create({
+            userId,
+            type: 'task_completed',
+            description: `completed task: ${task.title}`,
+            xpEarned: 10,
+            createdAt: new Date().toISOString()
+          });
+          const populatedAct = await act.populate('userId', 'name avatar');
+          
+          const conns = await FriendConnection.find({ friendUserId: userId });
+          conns.forEach(c => io.to(String(c.userId)).emit('friend_activity', populatedAct));
+        }
+      });
+    }
+
     res.json(task);
   } catch (error) {
     res.status(500).json({ error: 'Server error' });
@@ -395,12 +418,34 @@ router.post('/habits', requireAuth, async (req: Request, res: Response) => {
 
 router.put('/habits/:id', requireAuth, async (req: Request, res: Response) => {
   try {
+    const userId = (req as any).userId;
     const habit = await Habit.findOneAndUpdate(
-      { _id: req.params.id, userId: (req as any).userId },
+      { _id: req.params.id, userId },
       req.body,
       { new: true }
     );
     if (!habit) return res.status(404).json({ error: 'Habit not found' });
+
+    // Emit activity if habit is marked completedToday
+    if (req.body.completedToday === true) {
+      import('./models').then(async ({ ActivityFeed, User, FriendConnection }) => {
+        const user = await User.findById(userId);
+        if (user) {
+          const act = await ActivityFeed.create({
+            userId,
+            type: 'habit_completed',
+            description: `completed habit: ${habit.name}`,
+            xpEarned: 15,
+            createdAt: new Date().toISOString()
+          });
+          const populatedAct = await act.populate('userId', 'name avatar');
+          
+          const conns = await FriendConnection.find({ friendUserId: userId });
+          conns.forEach(c => io.to(String(c.userId)).emit('friend_activity', populatedAct));
+        }
+      });
+    }
+
     res.json(habit);
   } catch (error) {
     res.status(500).json({ error: 'Server error' });
@@ -417,11 +462,11 @@ router.delete('/habits/:id', requireAuth, async (req: Request, res: Response) =>
   }
 });
 
-/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+/* ══════════════════════════════════════════
    FRIENDS / PARTNERS ENDPOINTS (Real system)
-   â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
+   ══════════════════════════════════════════ */
 
-/** GET /partners â€” return all connected friends with live stats */
+/** GET /partners — return all connected friends with live stats */
 router.get('/partners', requireAuth, async (req: Request, res: Response) => {
   try {
     const userId = (req as any).userId;
@@ -492,7 +537,7 @@ router.post('/partners/invite', requireAuth, async (req: Request, res: Response)
   }
 });
 
-/** DELETE /partners/:id â€” disconnect from a friend */
+/** DELETE /partners/:id — disconnect from a friend */
 router.delete('/partners/:id', requireAuth, async (req: Request, res: Response) => {
   try {
     const conn = await FriendConnection.findOneAndDelete({
@@ -501,6 +546,140 @@ router.delete('/partners/:id', requireAuth, async (req: Request, res: Response) 
     });
     if (!conn) return res.status(404).json({ error: 'Connection not found' });
     res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+import { FriendRequest, ActivityFeed, Notification } from './models';
+
+/** POST /partners/request — send a friend request by invite code */
+router.post('/partners/request', requireAuth, async (req: Request, res: Response) => {
+  try {
+    const { code } = req.body;
+    if (!code) return res.status(400).json({ error: 'Invite code is required' });
+
+    const userId = (req as any).userId;
+    const me = await User.findById(userId);
+
+    if (me?.inviteCode?.toUpperCase() === code.toUpperCase()) {
+      return res.status(400).json({ error: "You cannot add yourself!" });
+    }
+
+    const targetUser = await User.findOne({ inviteCode: code.toUpperCase() });
+    if (!targetUser) {
+      return res.status(404).json({ error: 'No user found with that invite code.' });
+    }
+
+    const alreadyConnected = await FriendConnection.findOne({
+      $or: [
+        { userId, friendUserId: targetUser._id },
+        { userId: targetUser._id, friendUserId: userId }
+      ]
+    });
+    if (alreadyConnected) {
+      return res.status(400).json({ error: `You are already partners with ${targetUser.name}!` });
+    }
+
+    const existingReq = await FriendRequest.findOne({ fromUserId: userId, toUserId: targetUser._id });
+    if (existingReq) {
+      return res.status(400).json({ error: 'Friend request already sent.' });
+    }
+
+    const friendReq = new FriendRequest({
+      fromUserId: userId,
+      toUserId: targetUser._id,
+      status: 'pending',
+      createdAt: new Date().toISOString()
+    });
+    await friendReq.save();
+
+    await Notification.create({
+      recipientId: targetUser._id,
+      senderId: userId,
+      type: 'friend_request',
+      message: `${me?.name} sent you a partner request!`,
+      createdAt: new Date().toISOString()
+    });
+
+    res.status(201).json({ success: true, message: 'Request sent successfully!' });
+  } catch (error: any) {
+    if (error.code === 11000) return res.status(400).json({ error: 'Request already sent.' });
+    console.error(error);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+/** GET /partners/requests — get pending requests for me */
+router.get('/partners/requests', requireAuth, async (req: Request, res: Response) => {
+  try {
+    const userId = (req as any).userId;
+    const requests = await FriendRequest.find({ toUserId: userId, status: 'pending' }).populate('fromUserId', 'name avatar inviteCode');
+    res.json(requests);
+  } catch (error) {
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+/** POST /partners/accept — accept a friend request */
+router.post('/partners/accept', requireAuth, async (req: Request, res: Response) => {
+  try {
+    const { requestId } = req.body;
+    const userId = (req as any).userId;
+
+    const friendReq = await FriendRequest.findOne({ _id: requestId, toUserId: userId, status: 'pending' });
+    if (!friendReq) return res.status(404).json({ error: 'Request not found or already processed.' });
+
+    friendReq.status = 'accepted';
+    await friendReq.save();
+
+    await FriendConnection.create({
+      userId: friendReq.fromUserId,
+      friendUserId: friendReq.toUserId,
+      friendInviteCode: 'ACCEPTED',
+      connectedAt: new Date().toISOString()
+    });
+    const myConn = await FriendConnection.create({
+      userId: friendReq.toUserId,
+      friendUserId: friendReq.fromUserId,
+      friendInviteCode: 'ACCEPTED',
+      connectedAt: new Date().toISOString()
+    });
+
+    const friendUser = await User.findById(friendReq.fromUserId);
+    const payload = await buildPartnerPayload(friendUser, String(myConn._id));
+    res.json(payload);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+/** POST /partners/reject — reject a friend request */
+router.post('/partners/reject', requireAuth, async (req: Request, res: Response) => {
+  try {
+    const { requestId } = req.body;
+    const userId = (req as any).userId;
+    await FriendRequest.findOneAndUpdate({ _id: requestId, toUserId: userId }, { status: 'rejected' });
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+/** GET /partners/activity — get combined activity feed of all friends */
+router.get('/partners/activity', requireAuth, async (req: Request, res: Response) => {
+  try {
+    const userId = (req as any).userId;
+    const connections = await FriendConnection.find({ userId });
+    const friendIds = connections.map(c => c.friendUserId);
+    
+    const activities = await ActivityFeed.find({ userId: { $in: friendIds } })
+      .sort({ createdAt: -1 })
+      .limit(20)
+      .populate('userId', 'name avatar');
+      
+    res.json(activities);
   } catch (error) {
     res.status(500).json({ error: 'Server error' });
   }

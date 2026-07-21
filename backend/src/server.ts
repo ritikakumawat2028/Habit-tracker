@@ -4,9 +4,13 @@ import dotenv from 'dotenv';
 import mongoose from 'mongoose';
 import apiRouter from './routes';
 
+import http from 'http';
+import { Server as SocketIOServer } from 'socket.io';
+
 dotenv.config();
 
 const app = express();
+const server = http.createServer(app);
 const PORT = process.env.PORT || 5000;
 
 app.use(cors({
@@ -16,6 +20,27 @@ app.use(cors({
 }));
 
 app.use(express.json());
+
+// Initialize Socket.IO
+export const io = new SocketIOServer(server, {
+  cors: {
+    origin: '*',
+    methods: ['GET', 'POST']
+  }
+});
+
+io.on('connection', (socket) => {
+  console.log(`🔌 Socket connected: ${socket.id}`);
+  
+  socket.on('join_user_room', (userId) => {
+    socket.join(userId);
+    console.log(`User ${userId} joined their personal room.`);
+  });
+
+  socket.on('disconnect', () => {
+    console.log(`🔌 Socket disconnected: ${socket.id}`);
+  });
+});
 
 // Register API router
 app.use('/api', apiRouter);
@@ -30,8 +55,8 @@ app.get('/health-check', (req, res) => {
   res.json({ status: 'ok', time: new Date() });
 });
 
-// Start Express server right away so local API endpoints respond instantly
-app.listen(PORT, () => {
+// Start HTTP server (Express + Socket.io)
+server.listen(PORT, () => {
   console.log(`🚀 GrowSync Backend running on http://localhost:${PORT}`);
 });
 

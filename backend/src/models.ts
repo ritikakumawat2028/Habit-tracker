@@ -275,3 +275,143 @@ FriendConnectionSchema.set('toJSON', {
   transform: (doc: any, ret: any) => { ret.id = ret._id; delete ret._id; delete ret.__v; }
 });
 export const FriendConnection = mongoose.model<IFriendConnection>('FriendConnection', FriendConnectionSchema);
+
+/* ══════════════════════════════════════════
+   FRIEND REQUEST MODEL
+   ══════════════════════════════════════════ */
+export interface IFriendRequest extends Document {
+  fromUserId: mongoose.Types.ObjectId;
+  toUserId: mongoose.Types.ObjectId;
+  status: 'pending' | 'accepted' | 'rejected';
+  createdAt: string;
+}
+
+const FriendRequestSchema = new Schema<IFriendRequest>({
+  fromUserId: { type: Schema.Types.ObjectId, ref: 'User', required: true },
+  toUserId: { type: Schema.Types.ObjectId, ref: 'User', required: true },
+  status: { type: String, enum: ['pending', 'accepted', 'rejected'], default: 'pending' },
+  createdAt: { type: String, required: true },
+});
+
+FriendRequestSchema.index({ fromUserId: 1, toUserId: 1 }, { unique: true });
+FriendRequestSchema.set('toJSON', { virtuals: true, transform: (doc: any, ret: any) => { ret.id = ret._id; delete ret._id; delete ret.__v; } });
+export const FriendRequest = mongoose.model<IFriendRequest>('FriendRequest', FriendRequestSchema);
+
+/* ══════════════════════════════════════════
+   ACTIVITY FEED MODEL
+   ══════════════════════════════════════════ */
+export interface IActivityFeed extends Document {
+  userId: mongoose.Types.ObjectId;
+  type: string;
+  description: string;
+  xpEarned: number;
+  createdAt: string;
+}
+
+const ActivityFeedSchema = new Schema<IActivityFeed>({
+  userId: { type: Schema.Types.ObjectId, ref: 'User', required: true },
+  type: { type: String, required: true }, // e.g., 'task_completed', 'habit_completed', 'level_up'
+  description: { type: String, required: true },
+  xpEarned: { type: Number, default: 0 },
+  createdAt: { type: String, required: true },
+});
+
+ActivityFeedSchema.set('toJSON', { virtuals: true, transform: (doc: any, ret: any) => { ret.id = ret._id; delete ret._id; delete ret.__v; } });
+export const ActivityFeed = mongoose.model<IActivityFeed>('ActivityFeed', ActivityFeedSchema);
+
+/* ══════════════════════════════════════════
+   NOTIFICATION MODEL
+   ══════════════════════════════════════════ */
+export interface INotification extends Document {
+  recipientId: mongoose.Types.ObjectId;
+  senderId?: mongoose.Types.ObjectId;
+  type: string;
+  message: string;
+  read: boolean;
+  createdAt: string;
+}
+
+const NotificationSchema = new Schema<INotification>({
+  recipientId: { type: Schema.Types.ObjectId, ref: 'User', required: true },
+  senderId: { type: Schema.Types.ObjectId, ref: 'User' },
+  type: { type: String, required: true },
+  message: { type: String, required: true },
+  read: { type: Boolean, default: false },
+  createdAt: { type: String, required: true },
+});
+
+NotificationSchema.set('toJSON', { virtuals: true, transform: (doc: any, ret: any) => { ret.id = ret._id; delete ret._id; delete ret.__v; } });
+export const Notification = mongoose.model<INotification>('Notification', NotificationSchema);
+
+/* ══════════════════════════════════════════
+   SHARED ENTITIES (TASKS, HABITS, CHALLENGES)
+   ══════════════════════════════════════════ */
+export interface ISharedTask extends Document {
+  title: string;
+  creatorId: mongoose.Types.ObjectId;
+  assigneeId: mongoose.Types.ObjectId;
+  done: boolean;
+  dueDate: string;
+  category: string;
+  createdAt: string;
+}
+
+const SharedTaskSchema = new Schema<ISharedTask>({
+  title: { type: String, required: true },
+  creatorId: { type: Schema.Types.ObjectId, ref: 'User', required: true },
+  assigneeId: { type: Schema.Types.ObjectId, ref: 'User', required: true },
+  done: { type: Boolean, default: false },
+  dueDate: { type: String, required: true },
+  category: { type: String, default: 'Shared' },
+  createdAt: { type: String, required: true },
+});
+SharedTaskSchema.set('toJSON', { virtuals: true, transform: (doc: any, ret: any) => { ret.id = ret._id; delete ret._id; delete ret.__v; } });
+export const SharedTask = mongoose.model<ISharedTask>('SharedTask', SharedTaskSchema);
+
+export interface ISharedHabit extends Document {
+  title: string;
+  creatorId: mongoose.Types.ObjectId;
+  partnerId: mongoose.Types.ObjectId;
+  creatorStreak: number;
+  partnerStreak: number;
+  creatorCompletedToday: boolean;
+  partnerCompletedToday: boolean;
+  createdAt: string;
+}
+
+const SharedHabitSchema = new Schema<ISharedHabit>({
+  title: { type: String, required: true },
+  creatorId: { type: Schema.Types.ObjectId, ref: 'User', required: true },
+  partnerId: { type: Schema.Types.ObjectId, ref: 'User', required: true },
+  creatorStreak: { type: Number, default: 0 },
+  partnerStreak: { type: Number, default: 0 },
+  creatorCompletedToday: { type: Boolean, default: false },
+  partnerCompletedToday: { type: Boolean, default: false },
+  createdAt: { type: String, required: true },
+});
+SharedHabitSchema.set('toJSON', { virtuals: true, transform: (doc: any, ret: any) => { ret.id = ret._id; delete ret._id; delete ret.__v; } });
+export const SharedHabit = mongoose.model<ISharedHabit>('SharedHabit', SharedHabitSchema);
+
+export interface ISharedChallenge extends Document {
+  title: string;
+  description: string;
+  participants: mongoose.Types.ObjectId[];
+  progress: Map<string, number>; // Maps participant ObjectId string to progress percentage
+  xpReward: number;
+  startDate: string;
+  endDate: string;
+  createdAt: string;
+}
+
+const SharedChallengeSchema = new Schema<ISharedChallenge>({
+  title: { type: String, required: true },
+  description: { type: String, default: '' },
+  participants: [{ type: Schema.Types.ObjectId, ref: 'User' }],
+  progress: { type: Map, of: Number, default: {} },
+  xpReward: { type: Number, default: 100 },
+  startDate: { type: String, required: true },
+  endDate: { type: String, required: true },
+  createdAt: { type: String, required: true },
+});
+SharedChallengeSchema.set('toJSON', { virtuals: true, transform: (doc: any, ret: any) => { ret.id = ret._id; delete ret._id; delete ret.__v; } });
+export const SharedChallenge = mongoose.model<ISharedChallenge>('SharedChallenge', SharedChallengeSchema);

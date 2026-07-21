@@ -22,7 +22,10 @@ import {
    API LAYER (connects to Express backend)
    Falls back to localStorage if offline
 ══════════════════════════════════════════ */
+import { io } from "socket.io-client";
+
 const API_URL = import.meta.env.VITE_API_URL || "https://habit-tracker-backend-u7o8.onrender.com/api";
+export const socket = io(API_URL.replace("/api", ""), { autoConnect: false });
 
 async function apiFetch<T>(path: string, options?: RequestInit): Promise<T | null> {
   try {
@@ -728,7 +731,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   // ── Sync from backend on mount ──
   useEffect(() => {
-    if (!user) return;
+    if (!user) {
+      socket.disconnect();
+      return;
+    }
+    
+    // Connect to real-time events
+    socket.connect();
+    socket.emit("join_user_room", user.id);
+    
     apiFetch<Task[]>("/tasks").then(data => {
       if (Array.isArray(data)) { setTasks(data); persist("gs_tasks", data); }
     });
@@ -3076,33 +3087,26 @@ export function FriendsView() {
   // Emoji reaction input
   const [reactionMsg, setReactionMsg] = useState("");
   
-  // Real-time timeline feed simulation
-  const [activities, setActivities] = useState<string[]>([
-    "Partner completed Coding session (10 XP) 💻",
-    "Partner unlocked Early Bird Badge! 🌅",
-    "Partner finished Morning Run (20 XP) 🏃",
-    "Partner reached Level up! ⚡"
-  ]);
+  // Real-time timeline feed
+  const [activities, setActivities] = useState<any[]>([]);
 
   const currentPartner = selectedPartner || partners[0] || null;
 
   useEffect(() => {
-    if (!currentPartner) return;
-    const interval = setInterval(() => {
-      const name = currentPartner.name.split(" ")[0];
-      const alerts = [
-        `${name} completed Coding session (10 XP) 💻`,
-        `${name} finished workout exercise (15 XP) 🏋️`,
-        `${name} unlocked Habit Master badge! 🏆`,
-        `${name} completed Shared Hydration Challenge milestone 💧`,
-        `${name} finished Reading 30 min session 📚`,
-        `${name} checked in daily (+25 XP) ✅`,
-        `${name} completed Pomodoro study session 🧘`
-      ];
-      const randomMsg = alerts[Math.floor(Math.random() * alerts.length)];
-      setActivities(prev => [randomMsg, ...prev.slice(0, 10)]);
-    }, 18000);
-    return () => clearInterval(interval);
+    // Fetch initial feed from backend
+    apiFetch<any[]>("/partners/activity").then(data => {
+      if (Array.isArray(data)) setActivities(data);
+    });
+
+    // Listen to live socket events
+    const handleActivity = (newActivity: any) => {
+      setActivities(prev => [newActivity, ...prev].slice(0, 20));
+    };
+    
+    socket.on("friend_activity", handleActivity);
+    return () => {
+      socket.off("friend_activity", handleActivity);
+    };
   }, [currentPartner]);
 
   if (!user) return null;
@@ -3722,10 +3726,14 @@ export function FriendsView() {
                 </h4>
                 <div className="relative border-l-2 border-primary/30 pl-4 ml-1.5 space-y-4 pt-1">
                   {activities.map((act, i) => (
-                    <div key={i} className="relative text-xs">
+                    <div key={act.id || i} className="relative text-xs">
                       <div className="absolute -left-[21px] top-1 w-2.5 h-2.5 rounded-full bg-primary ring-4 ring-card" />
-                      <p className="font-bold text-foreground leading-relaxed">{act}</p>
-                      <p className="text-[10px] text-muted-foreground mt-0.5">Just now · Socket.io Sync</p>
+                      <p className="font-bold text-foreground leading-relaxed">
+                        {typeof act === "string" ? act : `${act.userId?.name || 'Partner'} ${act.description} ${act.xpEarned ? `(+${act.xpEarned} XP)` : ''}`}
+                      </p>
+                      <p className="text-[10px] text-muted-foreground mt-0.5">
+                        {typeof act === "string" ? "Just now · Socket.io Sync" : new Date(act.createdAt).toLocaleString()}
+                      </p>
                     </div>
                   ))}
                 </div>
