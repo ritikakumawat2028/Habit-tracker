@@ -2,8 +2,77 @@ import { Router, Request, Response, NextFunction } from 'express';
 import { User, Task, Note, Habit, GrowthPlan, FriendConnection, FriendRequest, ActivityFeed, Notification, FocusSession, HealthLog, JournalEntry } from './models';
 import mongoose from 'mongoose';
 import { io } from './server';
+import fs from 'fs';
+import path from 'path';
 
 const router = Router();
+
+const USERS_FILE = path.join(__dirname, '../data/users.json');
+
+function loadLocalUsers(): any[] {
+  try {
+    const dir = path.dirname(USERS_FILE);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    if (!fs.existsSync(USERS_FILE)) {
+      const defaultUsers = [
+        {
+          id: "mock_user_12345",
+          _id: new mongoose.Types.ObjectId("60c72b2f9b1d8b2bad000001").toString(),
+          name: 'Jordan Chen',
+          email: 'jordan@example.com',
+          bio: 'Offline test account',
+          level: 3,
+          xp: 350,
+          coins: 15,
+          streak: 2,
+          longestStreak: 5,
+          streakHistory: [new Date().toISOString().split('T')[0]],
+          joinDate: new Date().toLocaleString('en-US', { month: 'long', year: 'numeric' }),
+          goals: ['fitness', 'coding'],
+          inviteCode: 'USERQ1EA'
+        }
+      ];
+      fs.writeFileSync(USERS_FILE, JSON.stringify(defaultUsers, null, 2));
+      return defaultUsers;
+    }
+    const data = fs.readFileSync(USERS_FILE, 'utf8');
+    return JSON.parse(data);
+  } catch (err) {
+    console.error('Error loading local users:', err);
+    return [];
+  }
+}
+
+function saveLocalUsers(users: any[]) {
+  try {
+    const dir = path.dirname(USERS_FILE);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    fs.writeFileSync(USERS_FILE, JSON.stringify(users, null, 2));
+  } catch (err) {
+    console.error('Error saving local users:', err);
+  }
+}
+
+function generateUniqueInviteCode(existingUsers: any[]): string {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+  let code = '';
+  let isUnique = false;
+  
+  while (!isUnique) {
+    let randomPart = '';
+    for (let i = 0; i < 4; i++) {
+      randomPart += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    code = 'USER' + randomPart;
+    isUnique = !existingUsers.some(u => u.inviteCode === code);
+  }
+  
+  return code;
+}
 
 const requireAuth = (req: Request, res: Response, next: NextFunction) => {
   const authHeader = req.headers.authorization;
@@ -55,10 +124,15 @@ router.post('/auth/register', async (req: Request, res: Response) => {
     if (!email) return res.status(400).json({ error: 'Email is required' });
 
     if (mongoose.connection.readyState !== 1) {
-      // Mock signup fallback
+      const localUsers = loadLocalUsers();
+      const existing = localUsers.find(u => u.email.toLowerCase() === email.toLowerCase());
+      if (existing) {
+        return res.status(409).json({ error: 'An account with this email already exists. Please log in instead.' });
+      }
+
       const mockUser = {
         id: "mock_user_" + Math.random().toString(36).substring(2, 9),
-        _id: new mongoose.Types.ObjectId(),
+        _id: new mongoose.Types.ObjectId().toString(),
         name: name || 'New User',
         email,
         bio: 'Developing self-improvement habits.',
@@ -70,8 +144,11 @@ router.post('/auth/register', async (req: Request, res: Response) => {
         streakHistory: [new Date().toISOString().split('T')[0]],
         joinDate: new Date().toLocaleString('en-US', { month: 'long', year: 'numeric' }),
         goals: ['fitness', 'coding', 'productivity'],
-        inviteCode: 'USER' + Math.random().toString(36).substring(2, 6).toUpperCase()
+        inviteCode: generateUniqueInviteCode(localUsers)
       };
+
+      localUsers.push(mockUser);
+      saveLocalUsers(localUsers);
       return res.status(201).json(mockUser);
     }
 
@@ -89,24 +166,12 @@ router.post('/auth/login', async (req: Request, res: Response) => {
     if (!email) return res.status(400).json({ error: 'Email is required' });
 
     if (mongoose.connection.readyState !== 1) {
-      // Mock login fallback
-      const mockUser = {
-        id: "mock_user_12345",
-        _id: new mongoose.Types.ObjectId("60c72b2f9b1d8b2bad000001"),
-        name: 'Jordan Chen',
-        email,
-        bio: 'Offline test account',
-        level: 3,
-        xp: 350,
-        coins: 15,
-        streak: 2,
-        longestStreak: 5,
-        streakHistory: [new Date().toISOString().split('T')[0]],
-        joinDate: new Date().toLocaleString('en-US', { month: 'long', year: 'numeric' }),
-        goals: ['fitness', 'coding'],
-        inviteCode: 'USERQ1EA'
-      };
-      return res.json(mockUser);
+      const localUsers = loadLocalUsers();
+      const user = localUsers.find(u => u.email.toLowerCase() === email.toLowerCase());
+      if (!user) {
+        return res.status(401).json({ error: 'No account found with this email. Please sign up first.' });
+      }
+      return res.json(user);
     }
 
     const user = await User.findOne({ email });
@@ -118,21 +183,13 @@ router.post('/auth/login', async (req: Request, res: Response) => {
 router.get('/auth/profile', requireAuth, async (req: Request, res: Response) => {
   try {
     if (mongoose.connection.readyState !== 1) {
-      return res.json({
-        id: (req as any).userId || "mock_user_12345",
-        name: "Jordan Chen",
-        email: "jordan@example.com",
-        bio: "Offline test account",
-        level: 3,
-        xp: 350,
-        coins: 15,
-        streak: 2,
-        longestStreak: 5,
-        streakHistory: [new Date().toISOString().split('T')[0]],
-        joinDate: "June 2026",
-        goals: ["fitness", "coding"],
-        inviteCode: "USERQ1EA"
-      });
+      const localUsers = loadLocalUsers();
+      const userId = (req as any).userId;
+      const user = localUsers.find(u => u.id === userId || u._id === userId);
+      if (user) {
+        return res.json(user);
+      }
+      return res.status(404).json({ error: 'User not found' });
     }
     const user = await User.findById((req as any).userId);
     if (!user) return res.status(404).json({ error: 'User not found' });
@@ -143,6 +200,14 @@ router.get('/auth/profile', requireAuth, async (req: Request, res: Response) => 
 router.put('/auth/profile', requireAuth, async (req: Request, res: Response) => {
   try {
     if (mongoose.connection.readyState !== 1) {
+      const localUsers = loadLocalUsers();
+      const userId = (req as any).userId;
+      const index = localUsers.findIndex(u => u.id === userId || u._id === userId);
+      if (index !== -1) {
+        localUsers[index] = { ...localUsers[index], ...req.body };
+        saveLocalUsers(localUsers);
+        return res.json(localUsers[index]);
+      }
       return res.json(req.body);
     }
     const user = await User.findByIdAndUpdate((req as any).userId, req.body, { new: true });
@@ -398,7 +463,9 @@ const mockConnections: any[] = [];
 router.get('/partners', requireAuth, async (req: Request, res: Response) => {
   try {
     if (mongoose.connection.readyState !== 1) {
-      return res.json(mockConnections);
+      const userId = (req as any).userId;
+      const userConns = mockConnections.filter(c => c.userId === userId);
+      return res.json(userConns);
     }
     const userId = (req as any).userId;
     const connections = await FriendConnection.find({ userId });
@@ -420,36 +487,36 @@ router.post('/partners/invite', requireAuth, async (req: Request, res: Response)
     // Handle offline fallback connection
     if (mongoose.connection.readyState !== 1) {
       const cleanCode = code.trim().toUpperCase();
-      if (mockConnections.some(c => c.inviteCode === cleanCode)) {
+      
+      const localUsers = loadLocalUsers();
+      const friendUser = localUsers.find(u => u.inviteCode === cleanCode);
+      if (!friendUser) {
+        return res.status(404).json({ error: 'No user found with that invite code. Please check and try again.' });
+      }
+
+      const me = localUsers.find(u => u.id === userId || u._id === userId);
+      if (me && me.inviteCode === cleanCode) {
+        return res.status(400).json({ error: 'You cannot add yourself as a growth partner!' });
+      }
+
+      if (mockConnections.some(c => c.inviteCode === cleanCode && c.userId === userId)) {
         return res.status(400).json({ error: 'Already connected with this user!' });
       }
-      const mockFriendUser = {
-        _id: new mongoose.Types.ObjectId(),
-        name: cleanCode === "USER21PF" ? "Jordan Chen" : "Growth Partner",
-        avatar: null,
-        level: 4,
-        xp: 1850,
-        streak: 5,
-        longestStreak: 8,
-        inviteCode: cleanCode,
-        healthScore: 78,
-        careerScore: 82,
-        productivityScore: 88,
-        focusHours: 12.5,
-        sleepHours: 8,
-        mood: "great"
-      };
+
+      const connectionId = `mock_conn_${Date.now()}`;
+      
       const payload = {
-        id: `mock_conn_${Date.now()}`,
-        friendUserId: String(mockFriendUser._id),
-        name: mockFriendUser.name,
-        avatar: null,
-        level: mockFriendUser.level,
-        xp: mockFriendUser.xp,
-        streak: mockFriendUser.streak,
-        longestStreak: mockFriendUser.longestStreak,
+        id: connectionId,
+        userId: userId,
+        friendUserId: friendUser.id || String(friendUser._id),
+        name: friendUser.name,
+        avatar: friendUser.avatar || null,
+        level: friendUser.level || 1,
+        xp: friendUser.xp || 0,
+        streak: friendUser.streak || 0,
+        longestStreak: friendUser.longestStreak || friendUser.streak || 0,
         status: 'online' as const,
-        inviteCode: mockFriendUser.inviteCode,
+        inviteCode: friendUser.inviteCode,
         habits: [
           { name: "Code & Build Projects 1h", icon: "💻", done: true, streak: 5, consistencyScore: 90 },
           { name: "Daily Gym / Exercise", icon: "🏋️", done: false, streak: 3, consistencyScore: 80 }
@@ -459,12 +526,12 @@ router.post('/partners/invite', requireAuth, async (req: Request, res: Response)
           { title: "Practice Leetcode Trees", done: false, priority: "medium", difficulty: "Medium" }
         ],
         weekProgress: [65, 70, 80, 55, 90, 85, 95],
-        healthScore: mockFriendUser.healthScore,
-        careerScore: mockFriendUser.careerScore,
-        productivityScore: mockFriendUser.productivityScore,
-        focusHours: mockFriendUser.focusHours,
-        sleepHours: mockFriendUser.sleepHours,
-        mood: mockFriendUser.mood,
+        healthScore: friendUser.healthScore || 50,
+        careerScore: friendUser.careerScore || 50,
+        productivityScore: friendUser.productivityScore || 50,
+        focusHours: friendUser.focusHours || 0,
+        sleepHours: friendUser.sleepHours || 7,
+        mood: "great",
         habitCompletion: 50,
         taskCompletion: 50,
         completedTasks: 1,
