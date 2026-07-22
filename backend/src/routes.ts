@@ -16,26 +16,8 @@ function loadLocalUsers(): any[] {
       fs.mkdirSync(dir, { recursive: true });
     }
     if (!fs.existsSync(USERS_FILE)) {
-      const defaultUsers = [
-        {
-          id: "mock_user_12345",
-          _id: new mongoose.Types.ObjectId("60c72b2f9b1d8b2bad000001").toString(),
-          name: 'Jordan Chen',
-          email: 'jordan@example.com',
-          bio: 'Offline test account',
-          level: 3,
-          xp: 350,
-          coins: 15,
-          streak: 2,
-          longestStreak: 5,
-          streakHistory: [new Date().toISOString().split('T')[0]],
-          joinDate: new Date().toLocaleString('en-US', { month: 'long', year: 'numeric' }),
-          goals: ['fitness', 'coding'],
-          inviteCode: 'USERQ1EA'
-        }
-      ];
-      fs.writeFileSync(USERS_FILE, JSON.stringify(defaultUsers, null, 2));
-      return defaultUsers;
+      fs.writeFileSync(USERS_FILE, JSON.stringify([]));
+      return [];
     }
     const data = fs.readFileSync(USERS_FILE, 'utf8');
     return JSON.parse(data);
