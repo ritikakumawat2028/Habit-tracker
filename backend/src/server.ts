@@ -1,3 +1,11 @@
+import dns from 'dns';
+try {
+  // Override DNS servers to use public ones (Google and Cloudflare) to fix querySrv ECONNREFUSED in local networks
+  dns.setServers(['8.8.8.8', '1.1.1.1']);
+} catch (e) {
+  console.warn('⚠️ Failed to set public DNS servers, using system default resolver:', e);
+}
+
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
