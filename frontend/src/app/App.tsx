@@ -3359,7 +3359,14 @@ export function FriendsView() {
   const currentMood = todayLog?.mood || "😄 Great";
   
   const healthScoreCalc = todayLog ? Math.min(100, Math.round(((todayLog.waterMl || 1500) / 2500 * 50) + ((todayLog.sleepHours || 7) / 8 * 50))) : 85;
-  const careerScoreCalc = Math.min(100, 50 + careerApps.length * 10 + goalsList.length * 5);
+  const thisMonth = new Date().toISOString().slice(0, 7);
+  const monthSessions = focusSessions.filter(s => (s.date || "").startsWith(thisMonth));
+  const totalStudyMins = monthSessions.reduce((acc, s) => acc + (s.duration || 0), 0);
+  const totalStudyHrs = (totalStudyMins / 60).toFixed(1);
+  const codingSessions = monthSessions.filter(s => (s.category || "").toLowerCase().includes("cod")).length;
+  const offers = careerApps.filter(a => a.stage.includes("Offer")).length;
+  const totalApps = careerApps.length;
+  const careerScoreCalc = totalApps === 0 ? 0 : Math.min(100, Math.round(((offers * 30 + codingSessions * 2 + Number(totalStudyHrs)) / (totalApps * 5 + 50)) * 100));
   const productivityScoreCalc = Math.min(100, Math.round((habitCompletion + taskCompletion) / 2));
 
   // Structured profile data representing CURRENT USER
