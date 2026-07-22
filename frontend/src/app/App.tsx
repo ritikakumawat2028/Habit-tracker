@@ -3347,8 +3347,10 @@ export function FriendsView() {
   const pendingTasksCount = tasks.filter(t => !t.done).length;
   const taskCompletion = tasks.length > 0 ? Math.round((completedTasksCount / tasks.length) * 100) : 0;
   const focusHoursNum = Math.round(focusSessions.reduce((acc, s) => acc + (s.duration || 0), 0) / 60 * 10) / 10;
-  const studyHoursNum = Math.round((learningCourses.reduce((acc, c) => acc + (c.hours || 0), 0) + focusHoursNum) * 10) / 10;
-  const codingHoursNum = Math.round(tasks.filter(t => t.category === "Career" || t.category === "Learning" || t.title.toLowerCase().includes("code") || t.title.toLowerCase().includes("dev")).length * 1.5 * 10) / 10;
+  const studyHoursNum = Math.round((learningCourses.filter(c => c.completed).reduce((acc, c) => acc + (c.hours || 0), 0) + focusHoursNum) * 10) / 10;
+  const completedCodingTasks = tasks.filter(t => t.done && (t.category === "Career" || t.category === "Learning" || t.title.toLowerCase().includes("code") || t.title.toLowerCase().includes("dev")));
+  const codingFocusMins = focusSessions.filter(s => (s.category || "").toLowerCase() === "coding" || (s.category || "").toLowerCase() === "code").reduce((acc, s) => acc + (s.duration || 0), 0);
+  const codingHoursNum = Math.round((completedCodingTasks.length * 1.5 + codingFocusMins / 60) * 10) / 10;
   
   const todayLog = healthLogs[0];
   const waterCups = todayLog ? Math.round((todayLog.waterMl || 0) / 250) : 6;
