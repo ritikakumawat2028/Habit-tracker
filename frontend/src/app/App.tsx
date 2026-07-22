@@ -24,7 +24,7 @@ import {
 ══════════════════════════════════════════ */
 import { io } from "socket.io-client";
 
-const API_URL = import.meta.env.VITE_API_URL || "https://habit-tracker-backend-u7o8.onrender.com/api";
+const API_URL = (import.meta as any).env?.VITE_API_URL || "https://habit-tracker-backend-u7o8.onrender.com/api";
 export const socket = io(API_URL.replace("/api", ""), { autoConnect: false });
 
 async function apiFetch<T>(path: string, options?: RequestInit): Promise<T | null> {
@@ -53,6 +53,23 @@ async function apiFetch<T>(path: string, options?: RequestInit): Promise<T | nul
   }
 }
 
+/** apiFetch variant that also returns error details from the JSON body */
+async function apiFetchWithError<T>(path: string, options?: RequestInit): Promise<{ data: T | null; error: string | null; status: number }> {
+  try {
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    const u = localStorage.getItem("gs_user");
+    if (u) {
+      try { const parsed = JSON.parse(u); if (parsed?.id) headers["Authorization"] = `Bearer ${parsed.id}`; } catch {}
+    }
+    const res = await fetch(`${API_URL}${path}`, { headers: { ...headers, ...options?.headers }, ...options });
+    const json = await res.json().catch(() => null);
+    if (!res.ok) return { data: null, error: json?.error || `Error ${res.status}`, status: res.status };
+    return { data: json as T, error: null, status: res.status };
+  } catch {
+    return { data: null, error: "Network error — backend may be offline.", status: 0 };
+  }
+}
+
 /* ══════════════════════════════════════════
    TYPES
 ══════════════════════════════════════════ */
@@ -74,6 +91,18 @@ interface UserData {
   joinDate: string;
   goals: string[];
   inviteCode: string;
+  healthScore?: number;
+  careerScore?: number;
+  productivityScore?: number;
+  focusHours?: number;
+  studyHours?: number;
+  codingHours?: number;
+  waterIntake?: number;
+  sleepHours?: number;
+  exercise?: number;
+  currentChallenge?: string;
+  currentRank?: string;
+  mood?: string;
 }
 
 interface GrowthPlan {
@@ -97,7 +126,7 @@ interface Task {
   dueDate: string;
   createdAt: string;
   dueTime?: string;
-  estimatedDuration?: string;
+  estimatedDuration?: string | number;
   reminder?: boolean;
   tags?: string;
   recurring?: "none" | "daily" | "weekly" | "monthly";
@@ -283,12 +312,12 @@ const useTheme = () => useContext(ThemeCtx);
 
 export const AuthCtx = createContext<{
   user: UserData | null;
-  login: (email: string, name?: string) => void | Promise<void>;
+  login: (email: string, name?: string, mode?: "login" | "register") => void | Promise<{ ok: boolean; error?: string }>;
   logout: () => void;
   updateUser: (patch: Partial<UserData>) => void | Promise<void>;
   tasks: Task[];
   addTask: (t: Omit<Task, "id" | "createdAt">) => void | Promise<void>;
-  updateTask: (id: string, patch: Partial<Task>) => void | Promise<void>;
+  updateTask: (id: string, patch: Partial<Task>) => Promise<{ ok: boolean; error?: string }>;
   deleteTask: (id: string) => void | Promise<void>;
   notes: Note[];
   addNote: (n: Omit<Note, "id" | "createdAt">) => void | Promise<void>;
@@ -338,7 +367,7 @@ export const AuthCtx = createContext<{
   selectGrowthPlan: (id: string) => void;
 }>({
   user: null, login: () => {}, logout: () => {}, updateUser: () => {},
-  tasks: [], addTask: () => {}, updateTask: () => {}, deleteTask: () => {},
+  tasks: [], addTask: () => {}, updateTask: async () => ({ ok: true }), deleteTask: () => {},
   notes: [], addNote: () => {}, updateNote: () => {}, deleteNote: () => {},
   habits: [], addHabit: () => {}, updateHabit: () => {}, deleteHabit: () => {},
   goalsList: [], addGoal: () => {}, updateGoal: () => {}, deleteGoal: () => {},
@@ -599,6 +628,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (isFirstToday) {
       awardGrowthXp(25, 10);
     }
+    // Persist health log to backend (upsert by date)
+    apiFetch("/health-logs", { method: "POST", body: JSON.stringify({ ...patch, date: today }) });
   }, [persist, awardGrowthXp]);
 
   const generateCustomPlan = useCallback((categories: string[]) => {
@@ -630,24 +661,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // 1. Generate Tasks
     const newTasks: Task[] = [];
     if (sel.includes("fitness") || sel.includes("health")) {
-      newTasks.push({ id: tId(), title: "Complete 30-min full body workout or cardio interval", priority: "High", category: "Fitness", done: false, createdAt: nowStr, planId: masterPlanId, difficulty: "Medium", subtasks: [{ id: "c1", title: "5-min dynamic warmup", done: true }, { id: "c2", title: "20-min resistance training", done: false }, { id: "c3", title: "5-min cool down stretch", done: false }] });
-      newTasks.push({ id: tId(), title: "Meal prep clean, high-protein nutrition for the next 3 days", priority: "Medium", category: "Nutrition", done: false, createdAt: nowStr, planId: masterPlanId, difficulty: "Easy" });
+      newTasks.push({ id: tId(), title: "Complete 30-min full body workout or cardio interval", priority: "high", category: "Fitness", done: false, createdAt: nowStr, planId: masterPlanId, difficulty: "Medium", subtasks: [{ id: "c1", title: "5-min dynamic warmup", done: true }, { id: "c2", title: "20-min resistance training", done: false }, { id: "c3", title: "5-min cool down stretch", done: false }] });
+      newTasks.push({ id: tId(), title: "Meal prep clean, high-protein nutrition for the next 3 days", priority: "medium", category: "Nutrition", done: false, createdAt: nowStr, planId: masterPlanId, difficulty: "Easy" });
     }
     if (sel.includes("coding") || sel.includes("career")) {
-      newTasks.push({ id: tId(), title: "Solve 2 LeetCode algorithm challenges (Arrays / Dynamic Programming)", priority: "High", category: "Coding", done: false, createdAt: nowStr, planId: masterPlanId, difficulty: "Hard", subtasks: [{ id: "c1", title: "Write optimal solution without hints", done: false }, { id: "c2", title: "Analyze time and space complexity", done: false }] });
-      newTasks.push({ id: tId(), title: "Update GitHub portfolio & refine LinkedIn experience bullets", priority: "High", category: "Career", done: false, createdAt: nowStr, planId: masterPlanId, difficulty: "Medium" });
+      newTasks.push({ id: tId(), title: "Solve 2 LeetCode algorithm challenges (Arrays / Dynamic Programming)", priority: "high", category: "Coding", done: false, createdAt: nowStr, planId: masterPlanId, difficulty: "Hard", subtasks: [{ id: "c1", title: "Write optimal solution without hints", done: false }, { id: "c2", title: "Analyze time and space complexity", done: false }] });
+      newTasks.push({ id: tId(), title: "Update GitHub portfolio & refine LinkedIn experience bullets", priority: "high", category: "Career", done: false, createdAt: nowStr, planId: masterPlanId, difficulty: "Medium" });
     }
     if (sel.includes("reading") || sel.includes("mental")) {
-      newTasks.push({ id: tId(), title: "Read 25 pages of non-fiction book without phone distractions", priority: "Medium", category: "Reading", done: false, createdAt: nowStr, planId: masterPlanId, difficulty: "Easy" });
-      newTasks.push({ id: tId(), title: "Complete 15-minute guided breathwork and journaling reflection", priority: "High", category: "Mental", done: false, createdAt: nowStr, planId: masterPlanId, difficulty: "Easy" });
+      newTasks.push({ id: tId(), title: "Read 25 pages of non-fiction book without phone distractions", priority: "medium", category: "Reading", done: false, createdAt: nowStr, planId: masterPlanId, difficulty: "Easy" });
+      newTasks.push({ id: tId(), title: "Complete 15-minute guided breathwork and journaling reflection", priority: "high", category: "Mental", done: false, createdAt: nowStr, planId: masterPlanId, difficulty: "Easy" });
     }
     if (sel.includes("productivity") || sel.includes("sleep") || sel.includes("hydration") || sel.includes("selfcare")) {
-      newTasks.push({ id: tId(), title: "Review tomorrow's top 3 strategic priorities before finishing day", priority: "High", category: "Productivity", done: false, createdAt: nowStr, planId: masterPlanId, difficulty: "Medium" });
-      newTasks.push({ id: tId(), title: "Disconnect from all digital screens 45 minutes before bedtime", priority: "Medium", category: "Wellness", done: false, createdAt: nowStr, planId: masterPlanId, difficulty: "Medium" });
-      newTasks.push({ id: tId(), title: "Keep 1.5L water bottle on desk and refill at noon", priority: "High", category: "Health", done: false, createdAt: nowStr, planId: masterPlanId, difficulty: "Easy" });
+      newTasks.push({ id: tId(), title: "Review tomorrow's top 3 strategic priorities before finishing day", priority: "high", category: "Productivity", done: false, createdAt: nowStr, planId: masterPlanId, difficulty: "Medium" });
+      newTasks.push({ id: tId(), title: "Disconnect from all digital screens 45 minutes before bedtime", priority: "medium", category: "Wellness", done: false, createdAt: nowStr, planId: masterPlanId, difficulty: "Medium" });
+      newTasks.push({ id: tId(), title: "Keep 1.5L water bottle on desk and refill at noon", priority: "high", category: "Health", done: false, createdAt: nowStr, planId: masterPlanId, difficulty: "Easy" });
     }
     if (newTasks.length === 0) {
-      newTasks.push({ id: tId(), title: "Complete your first daily focus session and review habit streak", priority: "High", category: "Growth", done: false, createdAt: nowStr, planId: masterPlanId, difficulty: "Easy" });
+      newTasks.push({ id: tId(), title: "Complete your first daily focus session and review habit streak", priority: "high", category: "Growth", done: false, createdAt: nowStr, planId: masterPlanId, difficulty: "Easy" });
     }
     setTasks(newTasks); persist("gs_tasks", newTasks);
 
@@ -763,6 +794,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
       }
     });
+    // Sync newly persisted data types from backend
+    apiFetch<FocusSession[]>("/focus-sessions").then(data => {
+      if (Array.isArray(data)) { setFocusSessions(data); persist("gs_focus", data); }
+    });
+    apiFetch<JournalEntry[]>("/journals").then(data => {
+      if (Array.isArray(data)) { setJournals(data); persist("gs_journals", data); }
+    });
+    apiFetch<HealthLog[]>("/health-logs").then(data => {
+      if (Array.isArray(data) && data.length > 0) { setHealthLogs(data); persist("gs_health_logs", data); }
+    });
   }, [user, persist]);
 
   // ── Daily Streak Check-In Engine ──
@@ -816,14 +857,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [user?.id, persist]);
 
 
-  const login = useCallback(async (email: string, name?: string) => {
-    const serverUser = await apiFetch<UserData>("/auth/login", {
+  /**
+   * login(email, name, mode) is now used for BOTH sign-in and sign-up.
+   * mode="login"    → calls POST /auth/login  (error if email not found)
+   * mode="register" → calls POST /auth/register (error if email exists)
+   * Returns an object { ok, error } so callers can show error messages.
+   */
+  const login = useCallback(async (email: string, name?: string, mode: "login" | "register" = "login"): Promise<{ ok: boolean; error?: string }> => {
+    const endpoint = mode === "register" ? "/auth/register" : "/auth/login";
+    const result = await apiFetchWithError<UserData>(endpoint, {
       method: "POST",
       body: JSON.stringify({ email, name }),
     });
 
-    if (serverUser && serverUser.id) {
+    if (result.data && result.data.id) {
       // ✅ Backend online — use real account
+      const serverUser = result.data;
       setUser(serverUser);
       persist("gs_user", serverUser);
       // Clear stale cache then pull fresh data
@@ -832,12 +881,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       localStorage.removeItem("gs_habits");
       localStorage.removeItem("gs_partners");
       localStorage.removeItem("gs_growth_plans");
+      localStorage.removeItem("gs_focus");
+      localStorage.removeItem("gs_journals");
+      localStorage.removeItem("gs_health_logs");
       setTasks([]); setNotes([]); setHabits([]); setPartners([]); setGrowthPlans([]);
+      setFocusSessions([]); setJournals([]); setHealthLogs([]);
       apiFetch<Task[]>("/tasks").then(data => { if (Array.isArray(data)) { setTasks(data); persist("gs_tasks", data); } });
       apiFetch<Note[]>("/notes").then(data => { if (Array.isArray(data)) { setNotes(data); persist("gs_notes", data); } });
       apiFetch<Habit[]>("/habits").then(data => { if (Array.isArray(data)) { setHabits(data); persist("gs_habits", data); } });
       apiFetch<GrowthPartner[]>("/partners").then(data => { if (Array.isArray(data)) { setPartners(data); persist("gs_partners", data); } });
       apiFetch<GrowthPlan[]>("/plans").then(data => { if (Array.isArray(data)) { setGrowthPlans(data); persist("gs_growth_plans", data); const active = data.find(p => p.active); if (active) { setActivePlanId(active.id); localStorage.setItem("gs_active_plan_id", active.id); } } });
+      apiFetch<FocusSession[]>("/focus-sessions").then(data => { if (Array.isArray(data)) { setFocusSessions(data); persist("gs_focus", data); } });
+      apiFetch<JournalEntry[]>("/journals").then(data => { if (Array.isArray(data)) { setJournals(data); persist("gs_journals", data); } });
+      apiFetch<HealthLog[]>("/health-logs").then(data => { if (Array.isArray(data) && data.length > 0) { setHealthLogs(data); persist("gs_health_logs", data); } });
+      return { ok: true };
+    } else if (result.error && result.status !== 0) {
+      // ❌ Backend returned a proper error (wrong email, already exists, etc.)
+      return { ok: false, error: result.error };
     } else {
       // ⚠️ Backend offline — create a local account so the app is still usable
       const existingSaved = localStorage.getItem("gs_user");
@@ -861,6 +921,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           };
       setUser(localUser);
       persist("gs_user", localUser);
+      return { ok: true };
     }
   }, [persist]);
 
@@ -885,7 +946,26 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, [persist]);
 
-  const updateTask = useCallback(async (id: string, patch: Partial<Task>) => {
+  const updateTask = useCallback(async (id: string, patch: Partial<Task>): Promise<{ ok: boolean; error?: string }> => {
+    // ── Subtask gate: all subtasks must be done before marking a task complete ──
+    if (patch.done === true) {
+      // Read current tasks from state synchronously via functional pattern
+      let blocked = false;
+      setTasks(ts => {
+        const target = ts.find(t => t.id === id);
+        if (target && target.subtasks && target.subtasks.length > 0) {
+          const allDone = target.subtasks.every(s => s.done);
+          if (!allDone) {
+            blocked = true;
+          }
+        }
+        return ts; // no change
+      });
+      if (blocked) {
+        return { ok: false, error: "Complete all subtasks before marking this task as done! ✅" };
+      }
+    }
+
     let earnedXp = 0;
     setTasks(ts => {
       const target = ts.find(t => t.id === id);
@@ -900,6 +980,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       awardGrowthXp(15, 5);
     }
     await apiFetch(`/tasks/${id}`, { method: "PUT", body: JSON.stringify(patch) });
+    return { ok: true };
   }, [persist, awardGrowthXp]);
 
   const deleteTask = useCallback(async (id: string) => {
@@ -1037,48 +1118,42 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     });
   }, [persist]);
 
-  const addJournal = useCallback((j: Omit<JournalEntry, "id" | "date">) => {
-    const nextJournal = { ...j, id: `j_${Date.now()}`, date: new Date().toISOString().split("T")[0] };
-    setJournals(prev => {
-      const next = [nextJournal, ...prev];
-      persist("gs_journals", next);
-      return next;
-    });
+  const addJournal = useCallback(async (j: Omit<JournalEntry, "id" | "date">) => {
+    const today = new Date().toISOString().split("T")[0];
+    const localEntry: JournalEntry = { ...j, id: `j_${Date.now()}`, date: today };
+    setJournals(prev => { const next = [localEntry, ...prev]; persist("gs_journals", next); return next; });
     awardGrowthXp(25, 10);
+    const serverEntry = await apiFetch<JournalEntry>("/journals", { method: "POST", body: JSON.stringify({ ...j, date: today }) });
+    if (serverEntry) {
+      setJournals(prev => { const next = prev.map(x => x.id === localEntry.id ? serverEntry : x); persist("gs_journals", next); return next; });
+    }
   }, [persist, awardGrowthXp]);
 
-  const updateJournal = useCallback((id: string, patch: Partial<JournalEntry>) => {
-    setJournals(prev => {
-      const next = prev.map(j => j.id === id ? { ...j, ...patch } : j);
-      persist("gs_journals", next);
-      return next;
-    });
+  const updateJournal = useCallback(async (id: string, patch: Partial<JournalEntry>) => {
+    setJournals(prev => { const next = prev.map(j => j.id === id ? { ...j, ...patch } : j); persist("gs_journals", next); return next; });
+    await apiFetch(`/journals/${id}`, { method: "PUT", body: JSON.stringify(patch) });
   }, [persist]);
 
-  const deleteJournal = useCallback((id: string) => {
-    setJournals(prev => {
-      const next = prev.filter(j => j.id !== id);
-      persist("gs_journals", next);
-      return next;
-    });
+  const deleteJournal = useCallback(async (id: string) => {
+    setJournals(prev => { const next = prev.filter(j => j.id !== id); persist("gs_journals", next); return next; });
+    await apiFetch(`/journals/${id}`, { method: "DELETE" });
   }, [persist]);
 
-  const addFocusSession = useCallback((s: Omit<FocusSession, "id"> & { date?: string }) => {
-    const nextSession = { ...s, id: `f_${Date.now()}`, date: s.date || new Date().toISOString().split("T")[0] };
-    setFocusSessions(prev => {
-      const next = [nextSession, ...prev];
-      persist("gs_focus", next);
-      return next;
+  const addFocusSession = useCallback(async (s: Omit<FocusSession, "id"> & { date?: string }) => {
+    const today = s.date || new Date().toISOString().split("T")[0];
+    const localSession: FocusSession = { ...s, id: `f_${Date.now()}`, date: today };
+    setFocusSessions(prev => { const next = [localSession, ...prev]; persist("gs_focus", next); return next; });
+    setCoins(c => { const nextCoins = c + 5; persist("gs_coins", nextCoins); return nextCoins; });
+    if (user) awardGrowthXp(10, 5);
+    // Persist to backend
+    const serverSession = await apiFetch<FocusSession>("/focus-sessions", {
+      method: "POST",
+      body: JSON.stringify({ duration: s.duration, category: s.category, date: today })
     });
-    setCoins(c => {
-      const nextCoins = c + 5;
-      persist("gs_coins", nextCoins);
-      return nextCoins;
-    });
-    if (user) {
-      updateUser({ xp: user.xp + 10 });
+    if (serverSession) {
+      setFocusSessions(prev => { const next = prev.map(x => x.id === localSession.id ? serverSession : x); persist("gs_focus", next); return next; });
     }
-  }, [persist, user, updateUser]);
+  }, [persist, user, awardGrowthXp]);
 
   const toggleMission = useCallback((id: string) => {
     setMissions(prev => {
@@ -1298,10 +1373,14 @@ function AuthPage({ onNavigate }: { onNavigate: (v: View) => void }) {
     setLoading(true);
     setErr("");
     try {
-      await login(email, name || undefined);
+      const result = await login(email, name || undefined, mode === "signup" ? "register" : "login");
+      if (result && !result.ok) {
+        setErr(result.error || "Something went wrong. Please try again.");
+        return;
+      }
       onNavigate(mode === "signup" ? "onboarding" : "dashboard");
     } catch {
-      setErr("Failed to login. Please check your details.");
+      setErr("Failed to connect. Please check your internet connection.");
     } finally {
       setLoading(false);
     }
@@ -1486,6 +1565,21 @@ const navItems = [
 
 function Sidebar({ active, onNavigate }: { active: View; onNavigate: (v: View) => void }) {
   const { user, logout, coins } = useAuth();
+  const [pendingReqs, setPendingReqs] = useState<any[]>([]);
+
+  useEffect(() => {
+    if (!user) return;
+    const fetchPending = async () => {
+      const data = await apiFetch<any[]>("/partners/requests");
+      if (Array.isArray(data)) {
+        setPendingReqs(data);
+      }
+    };
+    fetchPending();
+    const interval = setInterval(fetchPending, 15000);
+    return () => clearInterval(interval);
+  }, [user]);
+
   if (!user) return null;
   return (
     <aside className="w-[240px] h-screen bg-sidebar border-r border-sidebar-border flex flex-col flex-shrink-0 font-['Poppins'] text-sidebar-foreground select-none sticky top-0">
@@ -1512,9 +1606,9 @@ function Sidebar({ active, onNavigate }: { active: View; onNavigate: (v: View) =
             >
               <span className={isSelected ? "text-primary" : "text-sidebar-foreground/60"}>{n.icon}</span>
               {n.label}
-              {n.id === "friends" && (
-                <span className="ml-auto w-4.5 h-4.5 rounded-full bg-primary/10 text-primary text-[10px] flex items-center justify-center font-bold">
-                  2
+              {n.id === "friends" && pendingReqs.length > 0 && (
+                <span className="ml-auto w-4.5 h-4.5 rounded-full bg-red-500 text-white text-[10px] flex items-center justify-center font-bold">
+                  {pendingReqs.length}
                 </span>
               )}
             </button>
@@ -1569,6 +1663,33 @@ function Sidebar({ active, onNavigate }: { active: View; onNavigate: (v: View) =
 function TopBar({ onNavigate, onQuickAdd, onToggleMenu }: { onNavigate: (v: View) => void; onQuickAdd: () => void; onToggleMenu?: () => void }) {
   const { user } = useAuth();
   const [showNotifs, setShowNotifs] = useState(false);
+  const [notifs, setNotifs] = useState<{ id: string; type: string; message: string; read: boolean; createdAt: string; senderId?: { name: string; avatar: string | null } }[]>([]);
+
+  const fetchNotifs = useCallback(async () => {
+    const data = await apiFetch<any[]>("/notifications");
+    if (Array.isArray(data)) {
+      setNotifs(data);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!user) return;
+    fetchNotifs();
+    const interval = setInterval(fetchNotifs, 15000);
+    return () => clearInterval(interval);
+  }, [user, fetchNotifs]);
+
+  const markAllRead = async () => {
+    await apiFetch("/notifications/read-all", { method: "PUT" });
+    setNotifs(prev => prev.map(n => ({ ...n, read: true })));
+  };
+
+  const markOneRead = async (id: string) => {
+    await apiFetch(`/notifications/${id}/read`, { method: "PUT" });
+    setNotifs(prev => prev.map(n => n.id === id ? { ...n, read: true } : n));
+  };
+
+  const unreadCount = notifs.filter(n => !n.read).length;
   
   if (!user) return null;
   return (
@@ -1612,22 +1733,46 @@ function TopBar({ onNavigate, onQuickAdd, onToggleMenu }: { onNavigate: (v: View
 
         {/* Notifications */}
         <div className="relative">
-          <button onClick={() => setShowNotifs(!showNotifs)} className="relative w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-white transition-all shadow-sm">
+          <button onClick={() => { setShowNotifs(!showNotifs); if (!showNotifs) fetchNotifs(); }} className="relative w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-white transition-all shadow-sm">
             <Bell size={14} />
-            <span className="absolute top-1 right-1 w-2 h-2 rounded-full bg-red-400" />
+            {unreadCount > 0 && (
+              <span className="absolute top-1 right-1 w-2 h-2 rounded-full bg-red-400 animate-pulse" />
+            )}
           </button>
           {showNotifs && (
-            <div className="absolute right-0 mt-2 w-64 bg-card border border-border shadow-2xl rounded-2xl p-3 z-50 text-foreground">
-              <h4 className="text-xs font-bold mb-2 pb-2 border-b border-border text-foreground">Notifications</h4>
+            <div className="absolute right-0 mt-2 w-72 bg-card border border-border shadow-2xl rounded-2xl p-3 z-50 text-foreground max-h-[350px] overflow-y-auto">
+              <div className="flex justify-between items-center mb-2 pb-2 border-b border-border">
+                <h4 className="text-xs font-bold text-foreground">Notifications ({unreadCount})</h4>
+                {unreadCount > 0 && (
+                  <button onClick={markAllRead} className="text-[10px] text-primary hover:underline font-bold">Mark all read</button>
+                )}
+              </div>
               <div className="space-y-2">
-                <div className="text-xs p-2 rounded-lg bg-primary/10 cursor-pointer">
-                  <p className="font-bold text-primary">Jordan completed a task!</p>
-                  <p className="text-[10px] text-muted-foreground mt-0.5">"Review System Design notes"</p>
-                </div>
-                <div className="text-xs p-2 rounded-lg hover:bg-muted/40 transition-colors cursor-pointer">
-                  <p className="font-bold text-foreground">Daily Streak 🔥</p>
-                  <p className="text-[10px] text-muted-foreground mt-0.5">You're on a {user.streak} day streak. Keep it up!</p>
-                </div>
+                {notifs.length === 0 ? (
+                  <p className="text-[10px] text-muted-foreground text-center py-4">No notifications yet.</p>
+                ) : (
+                  notifs.map(n => (
+                    <div
+                      key={n.id}
+                      onClick={() => { if (!n.read) markOneRead(n.id); }}
+                      className={`text-xs p-2.5 rounded-xl transition-all cursor-pointer border ${
+                        n.read ? "border-transparent bg-transparent hover:bg-muted/30" : "border-primary/20 bg-primary/5 hover:bg-primary/10"
+                      }`}
+                    >
+                      <div className="flex items-start gap-2">
+                        {n.senderId?.avatar ? (
+                          <Avatar src={n.senderId.avatar} name={n.senderId.name} size="sm" className="mt-0.5" />
+                        ) : (
+                          <span className="w-5 h-5 rounded-full bg-primary/10 text-primary flex items-center justify-center text-[10px] mt-0.5">🔔</span>
+                        )}
+                        <div className="flex-1">
+                          <p className="font-bold text-foreground text-[11px]">{n.message}</p>
+                          <p className="text-[9px] text-muted-foreground mt-0.5">{new Date(n.createdAt).toLocaleDateString()}</p>
+                        </div>
+                      </div>
+                    </div>
+                  ))
+                )}
               </div>
             </div>
           )}
@@ -1658,8 +1803,8 @@ function MiniCalendar() {
   const { tasks, notes } = useAuth();
   
   // Starting with June 2026 to match mock dataset initial dates, but user can change month!
-  const [currentDate, setCurrentDate] = useState(() => new Date(2026, 5, 17));
-  const [selected, setSelected] = useState<number>(17);
+  const [currentDate, setCurrentDate] = useState(() => new Date());
+  const [selected, setSelected] = useState<number>(() => new Date().getDate());
 
   const prevMonth = () => {
     setCurrentDate(prev => new Date(prev.getFullYear(), prev.getMonth() - 1, 1));
@@ -1703,6 +1848,11 @@ function MiniCalendar() {
     return hasTask || hasNote;
   };
 
+  const today = new Date();
+  const todayDate = today.getDate();
+  const todayMonth = today.getMonth();
+  const todayYear = today.getFullYear();
+
   return (
     <div>
       <div className="flex items-center justify-between mb-3">
@@ -1726,6 +1876,7 @@ function MiniCalendar() {
           if (!d) return <div key={i} className="aspect-square" />;
           const active = isDateActive(d);
           const isSelected = d === selected;
+          const isToday = d === todayDate && currentDate.getMonth() === todayMonth && currentDate.getFullYear() === todayYear;
           return (
             <button
               key={i}
@@ -1733,6 +1884,8 @@ function MiniCalendar() {
               className={`relative aspect-square flex flex-col items-center justify-center rounded-lg text-[11px] font-semibold transition-all ${
                 isSelected
                   ? "bg-primary text-white shadow-sm font-extrabold"
+                  : isToday
+                  ? "text-primary border border-primary/50 hover:bg-muted"
                   : "text-foreground hover:bg-muted"
               }`}
             >
@@ -1765,12 +1918,16 @@ const activityData = [
 ];
 
 export function DashboardView({ onNavigate, onQuickAdd }: { onNavigate: (v: View) => void; onQuickAdd: () => void }) {
-  const { user, tasks, updateTask, habits, updateHabit, partners, coins, addCoins, generateCustomPlan, updateUser, growthPlans, activePlanId, selectGrowthPlan } = useAuth();
+  const { user, tasks, updateTask, habits, updateHabit, partners, coins, addCoins, generateCustomPlan, updateUser, growthPlans, activePlanId, selectGrowthPlan, healthLogs, updateTodayHealth, addNote, focusSessions } = useAuth();
   
+  const todayStr = new Date().toISOString().split("T")[0];
+  const todayLog = healthLogs.find(l => l.date === todayStr) || { date: todayStr, waterMl: 0, sleepHours: 7, workoutMins: 0, mood: "okay", notes: "" };
+
+  const mood = todayLog.mood;
+  const waterCups = Math.min(8, Math.round(todayLog.waterMl / 250));
+  const sleepHours = todayLog.sleepHours;
+
   // Local state for dashboard widgets
-  const [mood, setMood] = useState("good");
-  const [waterCups, setWaterCups] = useState(4);
-  const [sleepHours, setSleepHours] = useState(7.5);
   const [quickMemo, setQuickMemo] = useState("");
   const [activeChallenge, setActiveChallenge] = useState("Run 5km with Jordan");
   const [showPlanModal, setShowPlanModal] = useState(false);
@@ -1778,6 +1935,27 @@ export function DashboardView({ onNavigate, onQuickAdd }: { onNavigate: (v: View
   const [filterPlanOnly, setFilterPlanOnly] = useState(false);
   const togglePlanCat = (id: string) => setPlanCategories(s => s.includes(id) ? s.filter(x => x !== id) : [...s, id]);
   
+  // Computed activity data from real tasks/habits/sessions
+  const computedActivityData = useMemo(() => {
+    const daysOfWeek = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+    const result = [];
+    const today = new Date();
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date(today);
+      d.setDate(today.getDate() - i);
+      const dateKey = d.toISOString().split("T")[0];
+      const dayLabel = daysOfWeek[d.getDay()];
+      const tasksDone = tasks.filter(t => t.done && t.dueDate === dateKey).length;
+      const habitsDone = habits.filter(h => h.history && h.history.includes(dateKey)).length;
+      const focusSessionsToday = focusSessions.filter(s => s.date === dateKey);
+      const focusMins = focusSessionsToday.reduce((sum, s) => sum + (s.duration || 0), 0);
+      const focusHrs = Math.round((focusMins / 60) * 10) / 10;
+      const xp = (tasksDone * 15) + (habitsDone * 20) + (focusMins * 1);
+      result.push({ day: dayLabel, xp: xp || 5, focus: focusHrs, tasks: tasksDone, habits: habitsDone });
+    }
+    return result;
+  }, [tasks, habits, focusSessions]);
+
   // Mini Pomodoro State inside dashboard
   const [pomoSecs, setPomoSecs] = useState(25 * 60);
   const [pomoActive, setPomoActive] = useState(false);
@@ -2050,7 +2228,7 @@ export function DashboardView({ onNavigate, onQuickAdd }: { onNavigate: (v: View
             ].map(x => (
               <button
                 key={x.m}
-                onClick={() => setMood(x.m)}
+                onClick={() => updateTodayHealth({ mood: x.m })}
                 className={`py-3 rounded-2xl border text-center transition-all ${
                   mood === x.m ? "bg-primary/10 border-primary text-primary scale-102 font-bold shadow-sm" : "border-border hover:bg-muted/40 text-foreground"
                 }`}
@@ -2141,7 +2319,12 @@ export function DashboardView({ onNavigate, onQuickAdd }: { onNavigate: (v: View
                   >
                     <div className="flex items-start gap-3">
                       <button
-                        onClick={() => updateTask(t.id, { done: !t.done })}
+                        onClick={async () => {
+                          const res = await updateTask(t.id, { done: !t.done });
+                          if (res && !res.ok && res.error) {
+                            alert(res.error);
+                          }
+                        }}
                         className={`w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0 transition-all mt-0.5 ${
                           t.done ? "bg-gradient-to-br from-primary to-accent border-transparent" : "border-foreground/20 hover:border-primary"
                         }`}
@@ -2289,7 +2472,7 @@ export function DashboardView({ onNavigate, onQuickAdd }: { onNavigate: (v: View
         <Card className="p-5 border-border shadow-sm">
           <h3 className="text-xs font-extrabold text-foreground/40 uppercase tracking-widest mb-4">Weekly Growth Analytics</h3>
           <ResponsiveContainer width="100%" height={180}>
-            <AreaChart data={activityData}>
+            <AreaChart data={computedActivityData}>
               <defs>
                 <linearGradient id="pXp" x1="0" y1="0" x2="0" y2="1">
                   <stop offset="5%" stopColor="#BA88AE" stopOpacity={0.3} />
@@ -2329,7 +2512,7 @@ export function DashboardView({ onNavigate, onQuickAdd }: { onNavigate: (v: View
               {Array.from({ length: 8 }).map((_, i) => (
                 <button
                   key={i}
-                  onClick={() => setWaterCups(i + 1)}
+                  onClick={() => updateTodayHealth({ waterMl: (i + 1) * 250 })}
                   className={`flex-1 h-7 rounded-lg transition-all ${i < waterCups ? "bg-primary text-white text-xs font-bold" : "bg-muted text-foreground/30 hover:bg-muted/80"}`}
                 >
                   🥛
@@ -2349,7 +2532,7 @@ export function DashboardView({ onNavigate, onQuickAdd }: { onNavigate: (v: View
               max="12"
               step="0.5"
               value={sleepHours}
-              onChange={e => setSleepHours(Number(e.target.value))}
+              onChange={e => updateTodayHealth({ sleepHours: Number(e.target.value) })}
               className="w-full accent-primary bg-muted rounded-lg appearance-none h-1.5"
             />
           </Card>
@@ -2424,9 +2607,18 @@ export function DashboardView({ onNavigate, onQuickAdd }: { onNavigate: (v: View
               className="w-full min-h-[60px] text-xs text-foreground placeholder-foreground/30 bg-transparent border-none outline-none resize-none"
             />
             {quickMemo && (
-              <div className="flex justify-between items-center pt-2 border-t border-border/40 text-[9px] text-foreground/40 font-bold">
-                <span>Auto-saved locally</span>
-                <button onClick={() => setQuickMemo("")} className="hover:text-red-500 transition-colors">Clear</button>
+              <div className="flex justify-between items-center pt-2 border-t border-border/40 text-[9px] font-bold">
+                <button
+                  onClick={async () => {
+                    await addNote({ title: "Scratchpad Note", body: quickMemo, color: "violet", pinned: false, folder: "General" });
+                    setQuickMemo("");
+                    alert("Saved to Notes! 📝");
+                  }}
+                  className="text-primary hover:underline"
+                >
+                  Save as Note 📝
+                </button>
+                <button onClick={() => setQuickMemo("")} className="text-foreground/40 hover:text-red-500 transition-colors">Clear</button>
               </div>
             )}
           </Card>
@@ -2497,6 +2689,7 @@ export function TasksView() {
     } else {
       addTask({
         ...taskForm,
+        done: false,
         subtasks: []
       });
     }
@@ -2936,7 +3129,11 @@ export function TasksView() {
                     <div className="flex justify-between items-center pt-2 border-t border-border/40 text-[10px]">
                       <span className="text-muted-foreground font-semibold">{t.category}</span>
                       <button
-                        onClick={() => updateTask(t.id, { tags: [...(t.tags || []), "in-progress"] })}
+                        onClick={() => {
+                          const currentTags = t.tags || "";
+                          const nextTags = currentTags ? `${currentTags}, in-progress` : "in-progress";
+                          updateTask(t.id, { tags: nextTags });
+                        }}
                         className="text-primary font-bold hover:underline flex items-center gap-0.5"
                       >
                         Start Focus →
@@ -3146,7 +3343,7 @@ export function FriendsView() {
   const completedTasksCount = tasks.filter(t => t.done).length;
   const pendingTasksCount = tasks.filter(t => !t.done).length;
   const taskCompletion = tasks.length > 0 ? Math.round((completedTasksCount / tasks.length) * 100) : 0;
-  const focusHoursNum = Math.round(focusSessions.reduce((acc, s) => acc + (s.durationMinutes || 0), 0) / 60 * 10) / 10;
+  const focusHoursNum = Math.round(focusSessions.reduce((acc, s) => acc + (s.duration || 0), 0) / 60 * 10) / 10;
   const studyHoursNum = Math.round((learningCourses.reduce((acc, c) => acc + (c.hours || 0), 0) + focusHoursNum) * 10) / 10;
   const codingHoursNum = Math.round(tasks.filter(t => t.category === "Career" || t.category === "Learning" || t.title.toLowerCase().includes("code") || t.title.toLowerCase().includes("dev")).length * 1.5 * 10) / 10;
   
@@ -4068,7 +4265,6 @@ export function HabitsView() {
 
   const handleAddHabit = () => {
     if (!newName.trim()) return;
-    const todayStr = new Date().toISOString().split("T")[0];
     addHabit({
       name: newName,
       category: newCat,
@@ -4076,11 +4272,6 @@ export function HabitsView() {
       priority: newPriority,
       freq: newFreq,
       target: "1 time",
-      streak: 1,
-      longestStreak: 1,
-      completedToday: true,
-      consistencyScore: 85,
-      history: [todayStr],
       paused: false,
       archived: false,
       planId: activePlanId || ""
@@ -4221,42 +4412,61 @@ export function HabitsView() {
         </div>
       </div>
 
-      {/* Add Habit panel */}
+      {/* Add Habit modal popup overlay */}
       {showAdd && (
-        <Card className="p-5 border-primary/30 bg-card shadow-md animate-fadeIn">
-          <h3 className="text-sm font-extrabold mb-4 text-primary flex items-center gap-2">
-            <PlusCircle size={16} /> Add System Habit
-          </h3>
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
-            <div className="md:col-span-2">
-              <Input label="Habit Name" placeholder="e.g. 30m Deep Code Review" value={newName} onChange={e => setNewName(e.target.value)} />
+        <div
+          onClick={(e) => { if (e.target === e.currentTarget) setShowAdd(false); }}
+          className="fixed inset-0 z-50 flex items-center justify-center bg-foreground/40 backdrop-blur-md p-4 select-none animate-fadeIn"
+        >
+          <motion.div
+            initial={{ opacity: 0, scale: 0.92, y: 15 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            className="p-6 max-w-lg w-full bg-card backdrop-blur-xl border border-border space-y-4 rounded-[24px] shadow-2xl card-neumorphic text-card-foreground relative"
+          >
+            <div className="flex justify-between items-center border-b border-border/40 pb-3">
+              <div className="flex items-center gap-2">
+                <span className="w-2.5 h-2.5 rounded-full bg-primary animate-pulse" />
+                <h3 className="font-extrabold text-base text-foreground font-['Plus_Jakarta_Sans'] flex items-center gap-2">
+                  <PlusCircle size={16} /> Add System Habit
+                </h3>
+              </div>
+              <button onClick={() => setShowAdd(false)} className="text-foreground/40 hover:text-foreground text-sm font-bold w-6 h-6 rounded-full hover:bg-muted/40 flex items-center justify-center transition-all">✕</button>
             </div>
-            <div>
-              <label className="block text-foreground/60 text-xs mb-1.5 font-bold">Category</label>
-              <select
-                value={newCat}
-                onChange={e => setNewCat(e.target.value)}
-                className="w-full bg-input border border-border rounded-xl px-3 py-2.5 text-foreground text-sm outline-none focus:border-primary"
-              >
-                {cats.slice(1).map(c => <option key={c} value={c}>{c}</option>)}
-              </select>
+            <div className="space-y-4">
+              <Input label="Habit Name" placeholder="e.g. 30m Deep Code Review" value={newName} onChange={e => setNewName(e.target.value)} required />
+              
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-foreground/60 text-xs mb-1.5 font-bold">Category</label>
+                  <select
+                    value={newCat}
+                    onChange={e => setNewCat(e.target.value)}
+                    className="w-full bg-input border border-border rounded-xl px-3 py-2.5 text-foreground text-xs font-bold outline-none focus:border-primary"
+                  >
+                    {cats.slice(1).map(c => <option key={c} value={c}>{c}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-foreground/60 text-xs mb-1.5 font-bold">Priority</label>
+                  <select
+                    value={newPriority}
+                    onChange={e => setNewPriority(e.target.value as any)}
+                    className="w-full bg-input border border-border rounded-xl px-3 py-2.5 text-foreground text-xs font-bold outline-none focus:border-primary"
+                  >
+                    <option value="high">High 🔥</option>
+                    <option value="medium">Medium ⚡</option>
+                    <option value="low">Low ☕</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="flex gap-2 pt-2 border-t border-border/40">
+                <Btn onClick={handleAddHabit} className="flex-1">Add Habit</Btn>
+                <Btn variant="ghost" onClick={() => setShowAdd(false)} className="flex-1 border border-border">Cancel</Btn>
+              </div>
             </div>
-            <div>
-              <label className="block text-foreground/60 text-xs mb-1.5 font-bold">Priority</label>
-              <select
-                value={newPriority}
-                onChange={e => setNewPriority(e.target.value as any)}
-                className="w-full bg-input border border-border rounded-xl px-3 py-2.5 text-foreground text-sm outline-none focus:border-primary"
-              >
-                <option value="high">High 🔥</option><option value="medium">Medium ⚡</option><option value="low">Low ☕</option>
-              </select>
-            </div>
-          </div>
-          <div className="flex gap-3 pt-2 border-t border-border/40">
-            <Btn onClick={handleAddHabit} variant="primary">Add Habit</Btn>
-            <Btn variant="ghost" onClick={() => setShowAdd(false)}>Cancel</Btn>
-          </div>
-        </Card>
+          </motion.div>
+        </div>
       )}
 
       {/* Habits Grid List with Heatmaps & Badges */}
@@ -4826,7 +5036,7 @@ export function FocusView() {
       interval = setInterval(() => setTimeLeft(t => t - 1), 1000);
     } else if (timeLeft === 0) {
       setIsActive(false);
-      addFocusSession({ duration, category: focusCategory });
+      addFocusSession({ duration, category: focusCategory, date: new Date().toISOString().split("T")[0] });
       alert(`Focus session complete! You earned 10 XP and 5 GrowCoins.`);
       setTimeLeft(duration * 60);
     }
@@ -5218,6 +5428,7 @@ export function JournalView() {
         color: noteColor,
         folder: noteFolder,
         planId: notePlanId || activePlanId || undefined,
+        pinned: false,
       });
     }
     setNoteTitle(""); setNoteBody(""); setNoteTags(""); setShowNoteForm(false);
@@ -5820,7 +6031,7 @@ export function AchievementsView() {
   );
   const habitsDoneCount = habits.reduce((acc, h) => acc + (h.completedToday ? 1 : 0) + (h.streak || 0), 0);
   const focusMinutesTotal = focusSessions.reduce((acc, s) => acc + (s.duration || 0), 0) +
-    tasks.filter(t => t.done).reduce((acc, t) => acc + (t.estimatedDuration || 30), 0);
+    tasks.filter(t => t.done).reduce((acc, t) => acc + Number(t.estimatedDuration || 30), 0);
   const focusHoursTotal = Math.round((focusMinutesTotal / 60) * 10) / 10;
 
   // 3. Dynamic Badges Engine
@@ -6046,7 +6257,7 @@ export function AnalyticsView() {
 
   // Focus & Study hours total
   const focusMinutesTotal = focusSessions.reduce((acc, s) => acc + (s.duration || 0), 0) +
-    tasks.filter(t => t.done).reduce((acc, t) => acc + (t.estimatedDuration || 30), 0);
+    tasks.filter(t => t.done).reduce((acc, t) => acc + Number(t.estimatedDuration || 30), 0);
   const focusHoursTotal = Math.round((focusMinutesTotal / 60) * 10) / 10;
 
   const completedTasksCount = tasks.filter(t => t.done).length;

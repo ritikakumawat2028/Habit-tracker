@@ -415,3 +415,105 @@ const SharedChallengeSchema = new Schema<ISharedChallenge>({
 });
 SharedChallengeSchema.set('toJSON', { virtuals: true, transform: (doc: any, ret: any) => { ret.id = ret._id; delete ret._id; delete ret.__v; } });
 export const SharedChallenge = mongoose.model<ISharedChallenge>('SharedChallenge', SharedChallengeSchema);
+
+/* ══════════════════════════════════════════
+   FOCUS SESSION MODEL
+   Tracks individual study/focus/coding sessions
+   ══════════════════════════════════════════ */
+export interface IFocusSession extends Document {
+  userId: mongoose.Types.ObjectId;
+  duration: number;        // in minutes
+  category: string;        // e.g. "Coding", "Study", "Reading"
+  date: string;            // ISO date string YYYY-MM-DD
+  notes?: string;
+  durationMinutes?: number; // alias kept for frontend compat
+}
+
+const FocusSessionSchema = new Schema<IFocusSession>({
+  userId: { type: Schema.Types.ObjectId, ref: 'User', required: true },
+  duration: { type: Number, required: true, min: 1 },
+  category: { type: String, default: 'General' },
+  date: { type: String, required: true },
+  notes: { type: String, default: '' },
+}, { timestamps: true });
+
+FocusSessionSchema.virtual('durationMinutes').get(function () {
+  return this.duration;
+});
+
+FocusSessionSchema.set('toJSON', {
+  virtuals: true,
+  transform: (doc: any, ret: any) => { ret.id = ret._id; delete ret._id; delete ret.__v; }
+});
+export const FocusSession = mongoose.model<IFocusSession>('FocusSession', FocusSessionSchema);
+
+/* ══════════════════════════════════════════
+   HEALTH LOG MODEL
+   One document per user per day for water/sleep/mood/workout
+   ══════════════════════════════════════════ */
+export interface IHealthLog extends Document {
+  userId: mongoose.Types.ObjectId;
+  date: string;            // YYYY-MM-DD
+  waterMl: number;         // total water in ml (250 per cup)
+  sleepHours: number;
+  workoutMins: number;
+  mood: string;
+  notes: string;
+}
+
+const HealthLogSchema = new Schema<IHealthLog>({
+  userId: { type: Schema.Types.ObjectId, ref: 'User', required: true },
+  date: { type: String, required: true },
+  waterMl: { type: Number, default: 0 },
+  sleepHours: { type: Number, default: 7 },
+  workoutMins: { type: Number, default: 0 },
+  mood: { type: String, default: 'okay' },
+  notes: { type: String, default: '' },
+}, { timestamps: true });
+
+// One log per user per day
+HealthLogSchema.index({ userId: 1, date: 1 }, { unique: true });
+
+HealthLogSchema.set('toJSON', {
+  virtuals: true,
+  transform: (doc: any, ret: any) => { ret.id = ret._id; delete ret._id; delete ret.__v; }
+});
+export const HealthLog = mongoose.model<IHealthLog>('HealthLog', HealthLogSchema);
+
+/* ══════════════════════════════════════════
+   JOURNAL ENTRY MODEL
+   Daily journal with structured reflection fields
+   ══════════════════════════════════════════ */
+export interface IJournalEntry extends Document {
+  userId: mongoose.Types.ObjectId;
+  date: string;
+  mood: string;
+  wins: string;
+  challenges: string;
+  gratitude: string;
+  lessons: string;
+  folder: string;
+  pinned: boolean;
+  tags: string[];
+  planId?: string;
+}
+
+const JournalEntrySchema = new Schema<IJournalEntry>({
+  userId: { type: Schema.Types.ObjectId, ref: 'User', required: true },
+  date: { type: String, required: true },
+  mood: { type: String, default: 'okay' },
+  wins: { type: String, default: '' },
+  challenges: { type: String, default: '' },
+  gratitude: { type: String, default: '' },
+  lessons: { type: String, default: '' },
+  folder: { type: String, default: 'General' },
+  pinned: { type: Boolean, default: false },
+  tags: { type: [String], default: [] },
+  planId: { type: String },
+}, { timestamps: true });
+
+JournalEntrySchema.set('toJSON', {
+  virtuals: true,
+  transform: (doc: any, ret: any) => { ret.id = ret._id; delete ret._id; delete ret.__v; }
+});
+export const JournalEntry = mongoose.model<IJournalEntry>('JournalEntry', JournalEntrySchema);
