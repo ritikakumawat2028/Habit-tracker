@@ -3367,7 +3367,7 @@ export function FriendsView() {
     level: user.level,
     xp: user.xp,
     currentStreak: user.streak,
-    longestStreak: Math.max(user.streak || 0, 14),
+    longestStreak: user.longestStreak || user.streak || 0,
     healthScore: healthScoreCalc,
     careerScore: careerScoreCalc,
     productivityScore: productivityScoreCalc,
@@ -3395,38 +3395,63 @@ export function FriendsView() {
   const partnerProfile = {
     avatar: currentPartner?.avatar || null,
     name: currentPartner?.name || "Growth Friend",
-    level: currentPartner?.level || 1,
-    xp: currentPartner?.xp || 0,
-    currentStreak: currentPartner?.streak || 0,
-    longestStreak: currentPartner?.longestStreak || currentPartner?.streak || 0,
-    healthScore: currentPartner?.healthScore ?? 65,
-    careerScore: currentPartner?.careerScore ?? 70,
-    productivityScore: currentPartner?.productivityScore ?? 68,
-    focusHours: currentPartner?.focusHours ?? 8.5,
-    habitCompletion: currentPartner?.habitCompletion ?? 70,
-    taskCompletion: currentPartner?.taskCompletion ?? 65,
-    studyHours: currentPartner?.studyHours ?? 10.5,
-    codingHours: currentPartner?.codingHours ?? 14.0,
-    waterIntake: currentPartner?.waterIntake ?? 7,
-    sleepHours: currentPartner?.sleepHours ?? 7,
-    exercise: currentPartner?.exercise ?? 40,
-    mood: currentPartner?.mood ?? "😊 Good",
-    achievements: currentPartner?.habits?.filter(h => h.done).length || 5,
-    weeklyGoalsDone: currentPartner?.weeklyGoalsDone ?? 3,
-    weeklyGoalsTotal: currentPartner?.weeklyGoalsTotal ?? 5,
-    monthlyGoalsDone: currentPartner?.monthlyGoalsDone ?? 6,
-    monthlyGoalsTotal: currentPartner?.monthlyGoalsTotal ?? 10,
-    completedTasks: currentPartner?.completedTasks ?? 12,
-    pendingTasks: currentPartner?.pendingTasks ?? 4,
-    currentChallenge: currentPartner?.currentChallenge ?? "30-Day Consistency",
-    currentRank: currentPartner?.currentRank ?? "Silver I",
+    level: currentPartner ? (currentPartner.level || 1) : 0,
+    xp: currentPartner ? (currentPartner.xp || 0) : 0,
+    currentStreak: currentPartner ? (currentPartner.streak || 0) : 0,
+    longestStreak: currentPartner ? (currentPartner.longestStreak || currentPartner.streak || 0) : 0,
+    healthScore: currentPartner ? (currentPartner.healthScore ?? 65) : 0,
+    careerScore: currentPartner ? (currentPartner.careerScore ?? 70) : 0,
+    productivityScore: currentPartner ? (currentPartner.productivityScore ?? 68) : 0,
+    focusHours: currentPartner ? (currentPartner.focusHours ?? 8.5) : 0,
+    habitCompletion: currentPartner ? (currentPartner.habitCompletion ?? 70) : 0,
+    taskCompletion: currentPartner ? (currentPartner.taskCompletion ?? 65) : 0,
+    studyHours: currentPartner ? (currentPartner.studyHours ?? 10.5) : 0,
+    codingHours: currentPartner ? (currentPartner.codingHours ?? 14.0) : 0,
+    waterIntake: currentPartner ? (currentPartner.waterIntake ?? 7) : 0,
+    sleepHours: currentPartner ? (currentPartner.sleepHours ?? 7) : 0,
+    exercise: currentPartner ? (currentPartner.exercise ?? 40) : 0,
+    mood: currentPartner ? (currentPartner.mood ?? "😊 Good") : "None",
+    achievements: currentPartner ? (currentPartner.habits?.filter(h => h.done).length || 5) : 0,
+    weeklyGoalsDone: currentPartner ? (currentPartner.weeklyGoalsDone ?? 3) : 0,
+    weeklyGoalsTotal: currentPartner ? (currentPartner.weeklyGoalsTotal ?? 5) : 0,
+    monthlyGoalsDone: currentPartner ? (currentPartner.monthlyGoalsDone ?? 6) : 0,
+    monthlyGoalsTotal: currentPartner ? (currentPartner.monthlyGoalsTotal ?? 10) : 0,
+    completedTasks: currentPartner ? (currentPartner.completedTasks ?? 12) : 0,
+    pendingTasks: currentPartner ? (currentPartner.pendingTasks ?? 4) : 0,
+    currentChallenge: currentPartner ? (currentPartner.currentChallenge ?? "30-Day Consistency") : "None",
+    currentRank: currentPartner ? (currentPartner.currentRank ?? "Silver I") : "Unranked",
   };
 
-  // Comparative charts data
-  const chartsData = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((day, i) => ({
-    day,
-    you: [65, 45, 80, 55, 92, 35, 70][i],
-    friend: currentPartner ? (currentPartner.weekProgress?.[i] || [50, 60, 55, 75, 65, 80, 70][i]) : 0,
+  // Real daily activity progress calculation for current user over past 7 days (Mon-Sun)
+  const computedActivityData = useMemo(() => {
+    const daysOfWeek = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+    const result = [];
+    const today = new Date();
+    const currentDay = today.getDay(); // 0 is Sun, 1 is Mon, etc.
+    const distanceToMonday = currentDay === 0 ? -6 : 1 - currentDay;
+    const monday = new Date(today);
+    monday.setDate(today.getDate() + distanceToMonday);
+
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(monday);
+      d.setDate(monday.getDate() + i);
+      const dateKey = d.toISOString().split("T")[0];
+      const dayLabel = daysOfWeek[i];
+      const tasksDone = tasks.filter(t => t.done && t.dueDate === dateKey).length;
+      const habitsDone = habits.filter(h => h.history && h.history.includes(dateKey)).length;
+      const focusSessionsToday = focusSessions.filter(s => s.date === dateKey);
+      const focusMins = focusSessionsToday.reduce((sum, s) => sum + (s.duration || 0), 0);
+      const xp = (tasksDone * 15) + (habitsDone * 20) + (focusMins * 1);
+      result.push({ day: dayLabel, xp: xp || 5 });
+    }
+    return result;
+  }, [tasks, habits, focusSessions]);
+
+  // Comparative charts data using real user weekly progress
+  const chartsData = computedActivityData.map((d, i) => ({
+    day: d.day,
+    you: d.xp,
+    friend: currentPartner ? (currentPartner.weekProgress?.[i] || 0) : 0,
   }));
 
   const hoursData = [
@@ -3443,12 +3468,26 @@ export function FriendsView() {
     { subject: "Streak Rate", you: Math.min(100, (userProfile.currentStreak / 30) * 100), friend: Math.min(100, (partnerProfile.currentStreak / 30) * 100), fullMark: 100 },
   ];
 
-  // Mock Calendar Heatmap days (4x7 grid comparison)
-  const heatmapDays = Array.from({ length: 28 }, (_, i) => ({
-    id: i,
-    you: i % 4 !== 0,
-    friend: i % 3 !== 0
-  }));
+  // Dynamic Calendar Heatmap days (4x7 grid comparison) based on user and partner check-in history
+  const heatmapDays = useMemo(() => {
+    const today = new Date();
+    return Array.from({ length: 28 }, (_, i) => {
+      const d = new Date(today);
+      d.setDate(today.getDate() - (27 - i));
+      const dateKey = d.toISOString().split("T")[0];
+      const userCheckedIn = (user.streakHistory && user.streakHistory.includes(dateKey)) ||
+                            tasks.some(t => t.done && t.dueDate === dateKey) ||
+                            habits.some(h => h.history && h.history.includes(dateKey));
+      const partnerCheckedIn = currentPartner
+        ? (currentPartner.streakHistory?.includes(dateKey) || (currentPartner.weekProgress?.[i % 7] > 10))
+        : false;
+      return {
+        id: i,
+        you: userCheckedIn,
+        friend: partnerCheckedIn
+      };
+    });
+  }, [user.streakHistory, tasks, habits, currentPartner]);
 
   // Trigger social cheers activity
   const sendSocialReaction = (type: string) => {
