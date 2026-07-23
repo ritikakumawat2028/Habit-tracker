@@ -3842,7 +3842,7 @@ export function FriendsView() {
                   <h3 className="text-xs font-extrabold text-muted-foreground uppercase tracking-widest">Consistency Grid (Past 28 Days)</h3>
                   <p className="text-[10px] text-foreground/50 mt-0.5">Comparing daily check-in blocks side-by-side</p>
                 </div>
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
                     <span className="text-[10px] font-extrabold text-primary block mb-1.5">You (Active Days)</span>
                     <div className="grid grid-cols-7 gap-1">
@@ -4512,7 +4512,7 @@ function ChatPanel({ friendUserId, onClose }: { friendUserId: string; onClose: (
 
   if (!conversation) {
     return (
-      <div className="fixed bottom-6 right-6 w-80 h-96 bg-card border border-border rounded-2xl shadow-2xl z-50 flex items-center justify-center">
+      <div className="fixed bottom-0 right-0 sm:bottom-6 sm:right-6 w-full sm:w-80 h-[60vh] sm:h-96 bg-card border border-border rounded-t-2xl sm:rounded-2xl shadow-2xl z-50 flex items-center justify-center">
         <div className="flex flex-col items-center gap-2 text-muted-foreground text-xs">
           <RefreshCw size={24} className="animate-spin text-primary" />
           <span>Starting chat session...</span>
@@ -4528,7 +4528,7 @@ function ChatPanel({ friendUserId, onClose }: { friendUserId: string; onClose: (
   }) || { name: "Friend" };
 
   return (
-    <div className="fixed bottom-6 right-6 w-80 h-[450px] bg-card border border-border/80 rounded-2xl shadow-2xl z-50 flex flex-col overflow-hidden animate-fadeIn">
+    <div className="fixed bottom-0 right-0 sm:bottom-6 sm:right-6 w-full sm:w-80 h-[85vh] sm:h-[450px] bg-card border border-border/80 rounded-t-2xl sm:rounded-2xl shadow-2xl z-50 flex flex-col overflow-hidden animate-fadeIn">
       {/* Header */}
       <div className="bg-[#5B3765] dark:bg-[#1e1124] text-white p-3.5 flex justify-between items-center select-none">
         <div className="flex items-center gap-2">
