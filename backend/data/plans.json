@@ -1,0 +1,14 @@
+[
+  {
+    "id": "gp_1784824349490",
+    "_id": "gp_1784824349490",
+    "userId": "mock_user_dcw548x",
+    "title": "Tailored Growth Plan (Hydration, Mental, Health)",
+    "category": "Hydration",
+    "description": "Comprehensive execution roadmap focused on hydration, mental, health mastery and habit optimization.",
+    "targetDate": "2026-10-21",
+    "progress": 0,
+    "active": true,
+    "createdAt": "2026-07-23"
+  }
+]

@@ -4251,16 +4251,22 @@ export function FriendsView() {
                 placeholder="Enter friend's invite code (e.g. A3F9B2D1)"
                 value={inviteCode}
                 onChange={e => setInviteCode(e.target.value.toUpperCase())}
-                className="font-['JetBrains_Mono'] tracking-widest text-sm py-2.5 bg-card"
+                disabled={partners.length >= 1}
+                className="font-['JetBrains_Mono'] tracking-widest text-sm py-2.5 bg-card disabled:opacity-50"
               />
               <button
                 onClick={tryInvite}
-                disabled={!inviteCode.trim() || inviteMsg?.msg === "Connecting with server..."}
+                disabled={partners.length >= 1 || !inviteCode.trim() || inviteMsg?.msg === "Connecting with server..."}
                 className="bg-primary text-white px-5 rounded-xl text-xs font-extrabold transition-all hover:opacity-90 disabled:opacity-40 shadow-sm flex items-center gap-1.5"
               >
                 <Users size={14} /> Connect
               </button>
             </div>
+            {partners.length >= 1 && (
+              <p className="text-xs text-amber-600 dark:text-amber-400 font-extrabold mt-1">
+                ⚠️ You can only have one growth partner. Please disconnect from your current partner first.
+              </p>
+            )}
             {inviteMsg && (
               <p className={`text-xs ${inviteMsg.ok ? "text-emerald-600 dark:text-emerald-400" : "text-red-500"} font-extrabold mt-1`}>
                 {inviteMsg.msg}
@@ -4288,6 +4294,11 @@ export function FriendsView() {
             {pendingRequests.length > 0 ? (
               <div className="space-y-3">
                 <p className="text-xs font-bold text-foreground/60 uppercase tracking-wider">Incoming Requests ({pendingRequests.length})</p>
+                {partners.length >= 1 && (
+                  <p className="text-[10px] text-amber-600 dark:text-amber-400 font-extrabold bg-amber-500/10 border border-amber-500/20 rounded-xl p-2.5 mb-2">
+                    ⚠️ You already have a growth partner. Disconnect from them first to accept new requests.
+                  </p>
+                )}
                 <div className="space-y-2">
                   {pendingRequests.map(req => (
                     <div key={req.id} className="p-3 bg-muted/40 rounded-2xl border border-border/50 flex items-center justify-between gap-3">
@@ -4308,7 +4319,8 @@ export function FriendsView() {
                               alert(res.error || "Failed to accept request");
                             }
                           }}
-                          className="px-3 py-1.5 bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl text-[10px] font-bold transition-all shadow-sm"
+                          disabled={partners.length >= 1}
+                          className="px-3 py-1.5 bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl text-[10px] font-bold transition-all shadow-sm disabled:opacity-40 disabled:hover:bg-emerald-500"
                         >
                           Accept
                         </button>

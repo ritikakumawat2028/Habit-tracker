@@ -1307,9 +1307,20 @@ router.post('/partners/invite', requireAuth, async (req: Request, res: Response)
 
       // Check if already friends
       const localConns = loadLocalConnections();
+      const myConnsCount = localConns.filter(c => c.userId === userId).length;
+      if (myConnsCount >= 1) {
+        return res.status(400).json({ error: 'You can only have one growth partner. Please disconnect from your current partner first.' });
+      }
+
+      const targetId = friendUser.id || String(friendUser._id);
+      const targetConnsCount = localConns.filter(c => c.userId === targetId).length;
+      if (targetConnsCount >= 1) {
+        return res.status(400).json({ error: `${friendUser.name} already has a growth partner.` });
+      }
+
       const alreadyFriends = localConns.some(c => 
-        (c.userId === userId && c.friendUserId === (friendUser.id || String(friendUser._id))) ||
-        (c.userId === (friendUser.id || String(friendUser._id)) && c.friendUserId === userId)
+        (c.userId === userId && c.friendUserId === targetId) ||
+        (c.userId === targetId && c.friendUserId === userId)
       );
       if (alreadyFriends) {
         return res.status(400).json({ error: `You are already growth partners with ${friendUser.name}!` });
@@ -1317,7 +1328,6 @@ router.post('/partners/invite', requireAuth, async (req: Request, res: Response)
 
       // Check if pending request exists
       const localReqs = loadLocalRequests();
-      const targetId = friendUser.id || String(friendUser._id);
       const existingReq = localReqs.some(r => 
         r.status === 'pending' && (
           (r.fromUserId === userId && r.toUserId === targetId) ||
@@ -1374,6 +1384,17 @@ router.post('/partners/invite', requireAuth, async (req: Request, res: Response)
     const targetUser = await User.findOne({ inviteCode: cleanCode });
     if (!targetUser) return res.status(404).json({ error: 'No user found with that invite code. Please check and try again.' });
 
+    // Check connection limits
+    const myConnsCount = await FriendConnection.countDocuments({ userId });
+    if (myConnsCount >= 1) {
+      return res.status(400).json({ error: 'You can only have one growth partner. Please disconnect from your current partner first.' });
+    }
+
+    const targetConnsCount = await FriendConnection.countDocuments({ userId: targetUser._id });
+    if (targetConnsCount >= 1) {
+      return res.status(400).json({ error: `${targetUser.name} already has a growth partner.` });
+    }
+
     // Block if already friends
     const alreadyConnected = await FriendConnection.findOne({
       $or: [
@@ -1427,13 +1448,49 @@ router.post('/partners/invite', requireAuth, async (req: Request, res: Response)
 
 router.delete('/partners/:id', requireAuth, async (req: Request, res: Response) => {
   try {
+    const userId = (req as any).userId;
     if (mongoose.connection.readyState !== 1) {
-      const idx = mockConnections.findIndex(c => c.id === req.params.id);
-      if (idx !== -1) mockConnections.splice(idx, 1);
+      const localConns = loadLocalConnections();
+      const conn = localConns.find(c => (c.id === req.params.id || c._id === req.params.id) && String(c.userId) === String(userId));
+      if (!conn) return res.status(404).json({ error: 'Connection not found' });
+
+      // Delete both directions
+      const filteredConns = localConns.filter(c => 
+        !(String(c.userId) === String(conn.userId) && String(c.friendUserId) === String(conn.friendUserId)) &&
+        !(String(c.userId) === String(conn.friendUserId) && String(c.friendUserId) === String(conn.userId))
+      );
+      saveLocalConnections(filteredConns);
+
+      // Clean up requests
+      const localReqs = loadLocalRequests();
+      const filteredReqs = localReqs.filter(r => 
+        !(String(r.fromUserId) === String(conn.userId) && String(r.toUserId) === String(conn.friendUserId)) &&
+        !(String(r.fromUserId) === String(conn.friendUserId) && String(r.toUserId) === String(conn.userId))
+      );
+      saveLocalRequests(filteredReqs);
+
       return res.json({ success: true });
     }
-    const conn = await FriendConnection.findOneAndDelete({ _id: req.params.id, userId: (req as any).userId });
+
+    const conn = await FriendConnection.findOne({ _id: req.params.id, userId });
     if (!conn) return res.status(404).json({ error: 'Connection not found' });
+
+    // Delete both directions of connections
+    await FriendConnection.deleteMany({
+      $or: [
+        { userId: conn.userId, friendUserId: conn.friendUserId },
+        { userId: conn.friendUserId, friendUserId: conn.userId }
+      ]
+    });
+
+    // Delete corresponding FriendRequest entries
+    await FriendRequest.deleteMany({
+      $or: [
+        { fromUserId: conn.userId, toUserId: conn.friendUserId },
+        { fromUserId: conn.friendUserId, toUserId: conn.userId }
+      ]
+    });
+
     res.json({ success: true });
   } catch (error) { res.status(500).json({ error: 'Server error' }); }
 });
@@ -1458,9 +1515,20 @@ router.post('/partners/request', requireAuth, async (req: Request, res: Response
 
       // Check if already friends
       const localConns = loadLocalConnections();
+      const myConnsCount = localConns.filter(c => c.userId === userId).length;
+      if (myConnsCount >= 1) {
+        return res.status(400).json({ error: 'You can only have one growth partner. Please disconnect from your current partner first.' });
+      }
+
+      const targetId = friendUser.id || String(friendUser._id);
+      const targetConnsCount = localConns.filter(c => c.userId === targetId).length;
+      if (targetConnsCount >= 1) {
+        return res.status(400).json({ error: `${friendUser.name} already has a growth partner.` });
+      }
+
       const alreadyFriends = localConns.some(c => 
-        (c.userId === userId && c.friendUserId === (friendUser.id || String(friendUser._id))) ||
-        (c.userId === (friendUser.id || String(friendUser._id)) && c.friendUserId === userId)
+        (c.userId === userId && c.friendUserId === targetId) ||
+        (c.userId === targetId && c.friendUserId === userId)
       );
       if (alreadyFriends) {
         return res.status(400).json({ error: `You are already growth partners with ${friendUser.name}!` });
@@ -1468,7 +1536,6 @@ router.post('/partners/request', requireAuth, async (req: Request, res: Response
 
       // Check if pending request exists
       const localReqs = loadLocalRequests();
-      const targetId = friendUser.id || String(friendUser._id);
       const existingReq = localReqs.some(r => 
         r.status === 'pending' && (
           (r.fromUserId === userId && r.toUserId === targetId) ||
@@ -1520,6 +1587,18 @@ router.post('/partners/request', requireAuth, async (req: Request, res: Response
     if (me?.inviteCode?.toUpperCase() === code.toUpperCase()) return res.status(400).json({ error: "You cannot add yourself!" });
     const targetUser = await User.findOne({ inviteCode: code.toUpperCase() });
     if (!targetUser) return res.status(404).json({ error: 'No user found with that invite code.' });
+
+    // Check connection limits
+    const myConnsCount = await FriendConnection.countDocuments({ userId });
+    if (myConnsCount >= 1) {
+      return res.status(400).json({ error: 'You can only have one growth partner. Please disconnect from your current partner first.' });
+    }
+
+    const targetConnsCount = await FriendConnection.countDocuments({ userId: targetUser._id });
+    if (targetConnsCount >= 1) {
+      return res.status(400).json({ error: `${targetUser.name} already has a growth partner.` });
+    }
+
     const alreadyConnected = await FriendConnection.findOne({ $or: [{ userId, friendUserId: targetUser._id }, { userId: targetUser._id, friendUserId: userId }] });
     if (alreadyConnected) return res.status(400).json({ error: `You are already partners with ${targetUser.name}!` });
     const existingReq = await FriendRequest.findOne({
@@ -1596,6 +1675,17 @@ router.post('/partners/accept', requireAuth, async (req: Request, res: Response)
       const friendReq = localReqs.find(r => r.id === requestId && r.toUserId === userId && r.status === 'pending');
       if (!friendReq) return res.status(404).json({ error: 'Request not found or already processed.' });
 
+      // Check connection limits
+      const acceptorConnsCount = localConns.filter(c => c.userId === userId).length;
+      if (acceptorConnsCount >= 1) {
+        return res.status(400).json({ error: 'You can only have one growth partner. Please disconnect from your current partner first.' });
+      }
+
+      const requesterConnsCount = localConns.filter(c => c.userId === friendReq.fromUserId).length;
+      if (requesterConnsCount >= 1) {
+        return res.status(400).json({ error: 'The requester already has a growth partner.' });
+      }
+
       friendReq.status = 'accepted';
       saveLocalRequests(localReqs);
 
@@ -1649,6 +1739,18 @@ router.post('/partners/accept', requireAuth, async (req: Request, res: Response)
 
     const friendReq = await FriendRequest.findOne({ _id: requestId, toUserId: userId, status: 'pending' });
     if (!friendReq) return res.status(404).json({ error: 'Request not found or already processed.' });
+
+    // Check connection limits
+    const acceptorConnsCount = await FriendConnection.countDocuments({ userId });
+    if (acceptorConnsCount >= 1) {
+      return res.status(400).json({ error: 'You can only have one growth partner. Please disconnect from your current partner first.' });
+    }
+
+    const requesterConnsCount = await FriendConnection.countDocuments({ userId: friendReq.fromUserId });
+    if (requesterConnsCount >= 1) {
+      return res.status(400).json({ error: 'The requester already has a growth partner.' });
+    }
+
     friendReq.status = 'accepted';
     await friendReq.save();
 

@@ -64,5 +64,28 @@
     "waterIntake": 2,
     "mood": "😊",
     "sleepHours": 7.5
+  },
+  {
+    "id": "mock_user_dcw548x",
+    "_id": "6a624215d99da306cf1cc548",
+    "name": "khushi",
+    "email": "khushi@gmail.com",
+    "bio": "Developing self-improvement habits.",
+    "level": 1,
+    "xp": 15,
+    "coins": 10,
+    "streak": 1,
+    "longestStreak": 1,
+    "growSyncId": "GS-608155",
+    "streakHistory": [
+      "2026-07-23"
+    ],
+    "joinDate": "July 2026",
+    "goals": [
+      "hydration",
+      "mental",
+      "health"
+    ],
+    "inviteCode": "GROW-O4E7FI"
   }
 ]
