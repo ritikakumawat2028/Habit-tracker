@@ -443,6 +443,32 @@ async function buildPartnerPayload(friendUser: any, connectionId: string) {
   };
 }
 
+async function notifyPartners(userId: string) {
+  try {
+    const uid = String(userId);
+    let friendIds: string[] = [];
+    if (mongoose.connection.readyState !== 1) {
+      const conns = loadLocalConnections();
+      conns.forEach(c => {
+        if (String(c.userId) === uid) friendIds.push(String(c.friendUserId));
+        else if (String(c.friendUserId) === uid) friendIds.push(String(c.userId));
+      });
+    } else {
+      const conns = await FriendConnection.find({ $or: [{ userId: uid }, { friendUserId: uid }] });
+      conns.forEach(c => {
+        if (String(c.userId) === uid) friendIds.push(String(c.friendUserId));
+        else if (String(c.friendUserId) === uid) friendIds.push(String(c.userId));
+      });
+    }
+    friendIds = Array.from(new Set(friendIds));
+    friendIds.forEach(fid => {
+      io.to(fid).emit('partner_updated', { userId: uid });
+    });
+  } catch (err) {
+    console.error('Error notifying partners:', err);
+  }
+}
+
 /* ══════════════════════════════════════════
    AUTH ENDPOINTS
    ══════════════════════════════════════════ */
@@ -747,11 +773,13 @@ router.post('/tasks', requireAuth, async (req: Request, res: Response) => {
       };
       localTasks.push(newTask);
       saveLocalTasks(localTasks);
+      notifyPartners(userId);
       return res.status(201).json(newTask);
     }
 
     const newTask = new Task({ userId, title, note: note || '', category: category || 'Personal', priority: priority || 'medium', done: false, dueDate: dueDate || new Date().toISOString().split('T')[0], createdAt: new Date().toISOString().split('T')[0], dueTime, estimatedDuration, reminder, tags, recurring, difficulty: difficulty || 'Medium', subtasks: subtasks || [], dependencies: dependencies || [], planId });
     await newTask.save();
+    notifyPartners(userId);
     res.status(201).json(newTask);
   } catch (error) { res.status(500).json({ error: 'Server error' }); }
 });
@@ -765,6 +793,7 @@ router.put('/tasks/:id', requireAuth, async (req: Request, res: Response) => {
       if (idx === -1) return res.status(404).json({ error: 'Task not found' });
       localTasks[idx] = { ...localTasks[idx], ...req.body };
       saveLocalTasks(localTasks);
+      notifyPartners(userId);
 
       if (req.body.done === true) {
         const localUsers = loadLocalUsers();
@@ -785,6 +814,7 @@ router.put('/tasks/:id', requireAuth, async (req: Request, res: Response) => {
 
     const task = await Task.findOneAndUpdate({ _id: req.params.id, userId }, req.body, { new: true });
     if (!task) return res.status(404).json({ error: 'Task not found' });
+    notifyPartners(userId);
     if (req.body.done === true) {
       const act = await ActivityFeed.create({ userId, type: 'task_completed', description: `completed task: ${task.title}`, xpEarned: 10, createdAt: new Date().toISOString() });
       const populatedAct = await act.populate('userId', 'name avatar');
@@ -801,10 +831,12 @@ router.delete('/tasks/:id', requireAuth, async (req: Request, res: Response) => 
       const localTasks = loadLocalTasks();
       const filtered = localTasks.filter(t => !(t.id === req.params.id || t._id === req.params.id) || String(t.userId) !== String(userId));
       saveLocalTasks(filtered);
+      notifyPartners(userId);
       return res.json({ success: true });
     }
     const task = await Task.findOneAndDelete({ _id: req.params.id, userId });
     if (!task) return res.status(404).json({ error: 'Task not found' });
+    notifyPartners(userId);
     res.json({ success: true });
   } catch (error) { res.status(500).json({ error: 'Server error' }); }
 });
@@ -881,11 +913,13 @@ router.post('/habits', requireAuth, async (req: Request, res: Response) => {
       };
       localHabits.push(newHabit);
       saveLocalHabits(localHabits);
+      notifyPartners(userId);
       return res.status(201).json(newHabit);
     }
 
     const newHabit = new Habit({ userId, name, category: category || 'Fitness', icon: icon || '🏃', priority: priority || 'medium', freq: freq || 'Daily', streak: 0, longestStreak: 0, target: target || '1 time', completedToday: false, consistencyScore: 0, history: history || [], paused: paused || false, archived: archived || false, notes: notes || '', planId });
     await newHabit.save();
+    notifyPartners(userId);
     res.status(201).json(newHabit);
   } catch (error) { res.status(500).json({ error: 'Server error' }); }
 });
@@ -899,6 +933,7 @@ router.put('/habits/:id', requireAuth, async (req: Request, res: Response) => {
       if (idx === -1) return res.status(404).json({ error: 'Habit not found' });
       localHabits[idx] = { ...localHabits[idx], ...req.body };
       saveLocalHabits(localHabits);
+      notifyPartners(userId);
 
       if (req.body.completedToday === true) {
         const localUsers = loadLocalUsers();
@@ -919,6 +954,7 @@ router.put('/habits/:id', requireAuth, async (req: Request, res: Response) => {
 
     const habit = await Habit.findOneAndUpdate({ _id: req.params.id, userId }, req.body, { new: true });
     if (!habit) return res.status(404).json({ error: 'Habit not found' });
+    notifyPartners(userId);
     if (req.body.completedToday === true) {
       const act = await ActivityFeed.create({ userId, type: 'habit_completed', description: `completed habit: ${habit.name}`, xpEarned: 15, createdAt: new Date().toISOString() });
       const populatedAct = await act.populate('userId', 'name avatar');
@@ -935,10 +971,12 @@ router.delete('/habits/:id', requireAuth, async (req: Request, res: Response) =>
       const localHabits = loadLocalHabits();
       const filtered = localHabits.filter(h => !(String(h.id) === String(req.params.id) || h._id === req.params.id) || String(h.userId) !== String(userId));
       saveLocalHabits(filtered);
+      notifyPartners(userId);
       return res.json({ success: true });
     }
     const habit = await Habit.findOneAndDelete({ _id: req.params.id, userId });
     if (!habit) return res.status(404).json({ error: 'Habit not found' });
+    notifyPartners(userId);
     res.json({ success: true });
   } catch (error) { res.status(500).json({ error: 'Server error' }); }
 });
@@ -986,6 +1024,7 @@ router.post('/focus-sessions', requireAuth, async (req: Request, res: Response) 
         localUsers[idx].focusHours = Math.round(totalMins / 60 * 10) / 10;
         saveLocalUsers(localUsers);
       }
+      notifyPartners(userId);
       return res.status(201).json(newSession);
     }
 
@@ -994,6 +1033,7 @@ router.post('/focus-sessions', requireAuth, async (req: Request, res: Response) 
     const allSessions = await FocusSession.find({ userId });
     const totalMins = allSessions.reduce((sum, s) => sum + (s.duration || 0), 0);
     await User.findByIdAndUpdate(userId, { focusHours: Math.round(totalMins / 60 * 10) / 10 });
+    notifyPartners(userId);
     res.status(201).json(session);
   } catch (error) { res.status(500).json({ error: 'Server error' }); }
 });
@@ -1004,10 +1044,12 @@ router.delete('/focus-sessions/:id', requireAuth, async (req: Request, res: Resp
       const localFocus = loadLocalFocus();
       const filtered = localFocus.filter(s => !(s.id === req.params.id || s._id === req.params.id) || String(s.userId) !== String(userId));
       saveLocalFocus(filtered);
+      notifyPartners(userId);
       return res.json({ success: true });
     }
     const session = await FocusSession.findOneAndDelete({ _id: req.params.id, userId });
     if (!session) return res.status(404).json({ error: 'Session not found' });
+    notifyPartners(userId);
     res.json({ success: true });
   } catch (error) { res.status(500).json({ error: 'Server error' }); }
 });
@@ -1066,6 +1108,7 @@ router.post('/health-logs', requireAuth, async (req: Request, res: Response) => 
         if (waterMl !== undefined) localUsers[idx].waterIntake = Math.round(waterMl / 250);
         saveLocalUsers(localUsers);
       }
+      notifyPartners(userId);
       return res.json(log);
     }
 
@@ -1079,6 +1122,7 @@ router.post('/health-logs', requireAuth, async (req: Request, res: Response) => 
     if (sleepHours !== undefined) updateFields.sleepHours = sleepHours;
     if (waterMl !== undefined) updateFields.waterIntake = Math.round(waterMl / 250);
     if (Object.keys(updateFields).length > 0) await User.findByIdAndUpdate(userId, updateFields);
+    notifyPartners(userId);
     res.json(log);
   } catch (error) { res.status(500).json({ error: 'Server error' }); }
 });

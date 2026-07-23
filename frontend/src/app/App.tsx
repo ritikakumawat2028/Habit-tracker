@@ -822,8 +822,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       });
     });
 
+    socket.on('partner_updated', ({ userId }: { userId: string }) => {
+      apiFetch<GrowthPartner[]>("/partners").then(data => {
+        if (Array.isArray(data)) {
+          setPartners(data);
+          persist("gs_partners", data);
+        }
+      });
+    });
+
     return () => {
       socket.off('friend_accepted');
+      socket.off('partner_updated');
     };
   }, [user, persist]);
 

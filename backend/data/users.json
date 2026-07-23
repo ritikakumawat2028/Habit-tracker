@@ -6,7 +6,7 @@
     "email": "ritika@gmail.com",
     "bio": "Developing self-improvement habits.",
     "level": 1,
-    "xp": 15,
+    "xp": 40,
     "coins": 10,
     "streak": 1,
     "longestStreak": 1,
@@ -27,7 +27,10 @@
       "health",
       "mental"
     ],
-    "inviteCode": "GROW-FFYWMO"
+    "inviteCode": "GROW-FFYWMO",
+    "waterIntake": 4,
+    "mood": "okay",
+    "sleepHours": 7
   },
   {
     "id": "mock_user_np5w7fi",
@@ -58,7 +61,7 @@
       "productivity"
     ],
     "inviteCode": "GROW-6FYWDQ",
-    "waterIntake": 0,
+    "waterIntake": 2,
     "mood": "😊",
     "sleepHours": 7.5
   }

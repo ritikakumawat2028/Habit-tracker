@@ -4,10 +4,21 @@
     "_id": "health_1784821522696",
     "userId": "mock_user_np5w7fi",
     "date": "2026-07-23",
-    "waterMl": 0,
+    "waterMl": 500,
     "sleepHours": 7.5,
     "workoutMins": 0,
     "mood": "😊",
+    "notes": ""
+  },
+  {
+    "id": "health_1784821934107",
+    "_id": "health_1784821934107",
+    "userId": "mock_user_3llhybc",
+    "date": "2026-07-23",
+    "waterMl": 1000,
+    "sleepHours": 7,
+    "workoutMins": 0,
+    "mood": "okay",
     "notes": ""
   }
 ]
