@@ -94,6 +94,7 @@ interface UserData {
   joinDate: string;
   goals: string[];
   inviteCode: string;
+  growSyncId?: string; // Unique GS-XXXXXX identifier
   healthScore?: number;
   careerScore?: number;
   productivityScore?: number;
@@ -315,7 +316,7 @@ const useTheme = () => useContext(ThemeCtx);
 
 export const AuthCtx = createContext<{
   user: UserData | null;
-  login: (email: string, name?: string, mode?: "login" | "register") => void | Promise<{ ok: boolean; error?: string }>;
+  login: (email: string, name?: string, mode?: "login" | "register", password?: string) => void | Promise<{ ok: boolean; error?: string }>;
   logout: () => void;
   updateUser: (patch: Partial<UserData>) => void | Promise<void>;
   tasks: Task[];
@@ -347,8 +348,10 @@ export const AuthCtx = createContext<{
   coins: number;
   addCoins: (c: number) => void;
   partners: GrowthPartner[];
-  addPartner: (code: string) => Promise<{ ok: boolean; error?: string; partner?: GrowthPartner }>;
+  addPartner: (code: string) => Promise<{ ok: boolean; pending?: boolean; error?: string; partner?: GrowthPartner; message?: string }>;
   removePartner: (id: string) => void | Promise<void>;
+  acceptFriendRequest: (requestId: string) => Promise<{ ok: boolean; error?: string }>;
+  rejectFriendRequest: (requestId: string) => Promise<{ ok: boolean; error?: string }>;
   learningSteps: LearningStep[];
   toggleLearningStep: (stepIdx: number) => void;
   addLearningStep: (s: { title: string; desc: string }) => void;
@@ -380,6 +383,7 @@ export const AuthCtx = createContext<{
   rewards: [], buyReward: () => false,
   coins: 0, addCoins: () => {},
   partners: [], addPartner: async () => ({ ok: false }), removePartner: () => {},
+  acceptFriendRequest: async () => ({ ok: false }), rejectFriendRequest: async () => ({ ok: false }),
   learningSteps: [], toggleLearningStep: () => {}, addLearningStep: () => {},
   learningCourses: [], addLearningCourse: () => {}, toggleCourseComplete: () => {},
   careerApps: [], addCareerApp: () => {}, updateCareerAppStage: () => {}, deleteCareerApp: () => {},
@@ -807,6 +811,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     apiFetch<HealthLog[]>("/health-logs").then(data => {
       if (Array.isArray(data) && data.length > 0) { setHealthLogs(data); persist("gs_health_logs", data); }
     });
+
+    // Real-time: when a sent friend request gets accepted, add the new partner to state
+    socket.on('friend_accepted', (partnerPayload: GrowthPartner) => {
+      setPartners(prev => {
+        if (prev.some(p => p.friendUserId === partnerPayload.friendUserId || p.id === partnerPayload.id)) return prev;
+        const next = [...prev, partnerPayload];
+        persist("gs_partners", next);
+        return next;
+      });
+    });
+
+    return () => {
+      socket.off('friend_accepted');
+    };
   }, [user, persist]);
 
   // ── Daily Streak Check-In Engine ──
@@ -861,16 +879,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
 
   /**
-   * login(email, name, mode) is now used for BOTH sign-in and sign-up.
-   * mode="login"    → calls POST /auth/login  (error if email not found)
+   * login(email, name, mode, password)
+   * mode="login"    → calls POST /auth/login  (error if email not found or wrong password)
    * mode="register" → calls POST /auth/register (error if email exists)
+   * Password is required for register; optional for login (legacy accounts without passwords are allowed through)
    * Returns an object { ok, error } so callers can show error messages.
    */
-  const login = useCallback(async (email: string, name?: string, mode: "login" | "register" = "login"): Promise<{ ok: boolean; error?: string }> => {
+  const login = useCallback(async (email: string, name?: string, mode: "login" | "register" = "login", password?: string): Promise<{ ok: boolean; error?: string }> => {
     const endpoint = mode === "register" ? "/auth/register" : "/auth/login";
     const result = await apiFetchWithError<UserData>(endpoint, {
       method: "POST",
-      body: JSON.stringify({ email, name }),
+      body: JSON.stringify({ email, name, password }),
     });
 
     if (result.data && result.data.id) {
@@ -899,7 +918,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       apiFetch<HealthLog[]>("/health-logs").then(data => { if (Array.isArray(data) && data.length > 0) { setHealthLogs(data); persist("gs_health_logs", data); } });
       return { ok: true };
     } else if (result.error && result.status !== 0) {
-      // ❌ Backend returned a proper error (wrong email, already exists, etc.)
+      // ❌ Backend returned a proper error (wrong email, already exists, wrong password, etc.)
       return { ok: false, error: result.error };
     } else {
       // ⚠️ Backend offline — create a local account so the app is still usable
@@ -1010,7 +1029,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await apiFetch(`/notes/${id}`, { method: "DELETE" });
   }, [persist]);
 
-  const addPartner = useCallback(async (code: string): Promise<{ ok: boolean; error?: string; partner?: GrowthPartner }> => {
+  const addPartner = useCallback(async (code: string): Promise<{ ok: boolean; pending?: boolean; error?: string; partner?: GrowthPartner; message?: string }> => {
     const cleanCode = code.trim().toUpperCase();
     if (!cleanCode) {
       return { ok: false, error: "Invite code cannot be empty." };
@@ -1034,10 +1053,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const data = await res.json().catch(() => null);
 
       if (res.ok && data) {
+        // Backend now returns { pending: true, message: "..." } — request flow
+        if (data.pending) {
+          return { ok: true, pending: true, message: data.message || "Friend request sent! Waiting for them to accept." };
+        }
+        // Legacy: direct partner payload (offline fallback might still do this)
         setPartners(ps => {
-          if (ps.some(p => p.inviteCode?.toUpperCase() === cleanCode || p.id === data.id)) {
-            return ps;
-          }
+          if (ps.some(p => p.inviteCode?.toUpperCase() === cleanCode || p.id === data.id)) return ps;
           const next = [...ps, data];
           persist("gs_partners", next);
           return next;
@@ -1051,6 +1073,51 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       return { ok: false, error: "Network error or server offline. Please make sure the backend server is running to connect real growth partners." };
     }
   }, [user, persist]);
+
+  const acceptFriendRequest = useCallback(async (requestId: string): Promise<{ ok: boolean; error?: string }> => {
+    try {
+      const res = await fetch(`${API_URL}/partners/accept`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...((() => { try { const u = JSON.parse(localStorage.getItem("gs_user") || ""); return u?.id ? { Authorization: `Bearer ${u.id}` } : {}; } catch { return {}; } })())
+        },
+        body: JSON.stringify({ requestId }),
+      });
+      const data = await res.json().catch(() => null);
+      if (res.ok && data && data.id) {
+        // Add the new partner to state
+        setPartners(ps => {
+          if (ps.some(p => p.friendUserId === data.friendUserId || p.id === data.id)) return ps;
+          const next = [...ps, data];
+          persist("gs_partners", next);
+          return next;
+        });
+        return { ok: true };
+      }
+      return { ok: false, error: data?.error || "Failed to accept request" };
+    } catch {
+      return { ok: false, error: "Network error" };
+    }
+  }, [persist]);
+
+  const rejectFriendRequest = useCallback(async (requestId: string): Promise<{ ok: boolean; error?: string }> => {
+    try {
+      const res = await fetch(`${API_URL}/partners/reject`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...((() => { try { const u = JSON.parse(localStorage.getItem("gs_user") || ""); return u?.id ? { Authorization: `Bearer ${u.id}` } : {}; } catch { return {}; } })())
+        },
+        body: JSON.stringify({ requestId }),
+      });
+      const data = await res.json().catch(() => null);
+      if (res.ok) return { ok: true };
+      return { ok: false, error: data?.error || "Failed to reject request" };
+    } catch {
+      return { ok: false, error: "Network error" };
+    }
+  }, []);
 
   const removePartner = useCallback(async (id: string) => {
     setPartners(ps => { const next = ps.filter(p => p.id !== id); persist("gs_partners", next); return next; });
@@ -1208,7 +1275,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [persist]);
 
   return (
-    <AuthCtx.Provider value={{ user, login, logout, updateUser, tasks, addTask, updateTask, deleteTask, notes, addNote, updateNote, deleteNote, habits, addHabit, updateHabit, deleteHabit, goalsList, addGoal, updateGoal, deleteGoal, journals, addJournal, updateJournal, deleteJournal, focusSessions, addFocusSession, missions, toggleMission, rewards, buyReward, coins, addCoins, partners, addPartner, removePartner, learningSteps, toggleLearningStep, addLearningStep, learningCourses, addLearningCourse, toggleCourseComplete, careerApps, addCareerApp, updateCareerAppStage, deleteCareerApp, healthLogs, updateTodayHealth, generateCustomPlan, growthPlans, activePlanId, addGrowthPlan, updateGrowthPlan, deleteGrowthPlan, selectGrowthPlan }}>
+    <AuthCtx.Provider value={{ user, login, logout, updateUser, tasks, addTask, updateTask, deleteTask, notes, addNote, updateNote, deleteNote, habits, addHabit, updateHabit, deleteHabit, goalsList, addGoal, updateGoal, deleteGoal, journals, addJournal, updateJournal, deleteJournal, focusSessions, addFocusSession, missions, toggleMission, rewards, buyReward, coins, addCoins, partners, addPartner, removePartner, acceptFriendRequest, rejectFriendRequest, learningSteps, toggleLearningStep, addLearningStep, learningCourses, addLearningCourse, toggleCourseComplete, careerApps, addCareerApp, updateCareerAppStage, deleteCareerApp, healthLogs, updateTodayHealth, generateCustomPlan, growthPlans, activePlanId, addGrowthPlan, updateGrowthPlan, deleteGrowthPlan, selectGrowthPlan }}>
       {children}
     </AuthCtx.Provider>
   );
@@ -1366,17 +1433,21 @@ function AuthPage({ onNavigate }: { onNavigate: (v: View) => void }) {
   const [showPw, setShowPw] = useState(false);
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [err, setErr] = useState("");
 
   const [loading, setLoading] = useState(false);
 
   const submit = async () => {
-    if (!email.includes("@")) { setErr("Enter a valid email."); return; }
+    if (!email.trim()) { setErr("Email or GrowSync ID is required."); return; }
+    if (mode === "signup" && !email.includes("@")) { setErr("Enter a valid email address."); return; }
     if (mode === "signup" && !name.trim()) { setErr("Enter your name."); return; }
+    if (mode === "login" && !password.trim()) { setErr("Password is required."); return; }
+    if (mode === "signup" && password.length < 6) { setErr("Password must be at least 6 characters."); return; }
     setLoading(true);
     setErr("");
     try {
-      const result = await login(email, name || undefined, mode === "signup" ? "register" : "login");
+      const result = await login(email, name || undefined, mode === "signup" ? "register" : "login", password);
       if (result && !result.ok) {
         setErr(result.error || "Something went wrong. Please try again.");
         return;
@@ -1423,7 +1494,7 @@ function AuthPage({ onNavigate }: { onNavigate: (v: View) => void }) {
           {/* Mode Switcher */}
           <div className="flex bg-muted/50 p-1.5 rounded-xl">
             {["login", "signup"].map(m => (
-              <button key={m} onClick={() => { setMode(m as "login" | "signup"); setErr(""); }}
+              <button key={m} onClick={() => { setMode(m as "login" | "signup"); setErr(""); setPassword(""); }}
                 className={`flex-1 py-2.5 rounded-lg text-sm font-bold transition-all capitalize ${
                   mode === m 
                   ? "bg-card text-foreground shadow-sm scale-[1.02]" 
@@ -1442,7 +1513,7 @@ function AuthPage({ onNavigate }: { onNavigate: (v: View) => void }) {
                 </motion.div>
               )}
             </AnimatePresence>
-            <Input label="Email" type="email" placeholder="alex@example.com" value={email} onChange={e => setEmail(e.target.value)} />
+            <Input label="Email or GrowSync ID" placeholder="alex@example.com or GS-123456" value={email} onChange={e => setEmail(e.target.value)} />
             
             <div>
               <label className="block text-foreground text-xs mb-2 font-bold">Password</label>
@@ -1450,6 +1521,8 @@ function AuthPage({ onNavigate }: { onNavigate: (v: View) => void }) {
                 <input 
                   type={showPw ? "text" : "password"} 
                   placeholder="••••••••" 
+                  value={password}
+                  onChange={e => setPassword(e.target.value)}
                   className="w-full bg-input/50 border border-border/50 rounded-xl px-4 py-3 text-foreground placeholder-muted-foreground text-sm outline-none focus:border-primary focus:ring-1 focus:ring-primary/30 transition-all pr-10" 
                 />
                 <button type="button" onClick={() => setShowPw(!showPw)} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground p-1 rounded-md transition-colors">
@@ -3283,11 +3356,14 @@ export function TasksView() {
    FRIENDS — GROW TOGETHER VIEW
 ══════════════════════════════════════════ */
 export function FriendsView() {
-  const { user, partners, addPartner, removePartner, habits, tasks, focusSessions, learningCourses, healthLogs, careerApps, goalsList } = useAuth();
+  const { user, partners, addPartner, removePartner, acceptFriendRequest, rejectFriendRequest, habits, tasks, focusSessions, learningCourses, healthLogs, careerApps, goalsList } = useAuth();
   const [inviteCode, setInviteCode] = useState("");
   const [inviteMsg, setInviteMsg] = useState<{ ok: boolean; msg: string } | null>(null);
   const [selectedPartner, setSelectedPartner] = useState<GrowthPartner | null>(partners[0] || null);
   const [copied, setCopied] = useState(false);
+  const [pendingRequests, setPendingRequests] = useState<any[]>([]);
+  const [sentRequests, setSentRequests] = useState<any[]>([]);
+  const [activeChatUserId, setActiveChatUserId] = useState<string | null>(null);
   
   // Active sub-tab inside the comparison column
   const [centerTab, setCenterTab] = useState<"charts" | "compare" | "insights" | "goals" | "feed">("charts");
@@ -3299,6 +3375,20 @@ export function FriendsView() {
   const [activities, setActivities] = useState<any[]>([]);
 
   const currentPartner = selectedPartner || partners[0] || null;
+
+  const fetchRequests = useCallback(async () => {
+    const incoming = await apiFetch<any[]>("/partners/requests");
+    if (Array.isArray(incoming)) setPendingRequests(incoming);
+    
+    const outgoing = await apiFetch<any[]>("/partners/sent-requests");
+    if (Array.isArray(outgoing)) setSentRequests(outgoing);
+  }, []);
+
+  useEffect(() => {
+    fetchRequests();
+    const interval = setInterval(fetchRequests, 10000);
+    return () => clearInterval(interval);
+  }, [fetchRequests]);
 
   useEffect(() => {
     // Fetch initial feed from backend
@@ -3330,9 +3420,14 @@ export function FriendsView() {
     setInviteMsg({ ok: false, msg: "Connecting with server..." });
     const result = await addPartner(inviteCode.trim());
     if (result?.ok) {
-      setInviteMsg({ ok: true, msg: "Growth partner connected successfully! 🎉" });
+      if (result.pending) {
+        setInviteMsg({ ok: true, msg: result.message || "Friend request sent successfully! 🎉" });
+        fetchRequests();
+      } else {
+        setInviteMsg({ ok: true, msg: "Growth partner connected successfully! 🎉" });
+        if (result.partner) setSelectedPartner(result.partner);
+      }
       setInviteCode("");
-      if (result.partner) setSelectedPartner(result.partner);
     } else {
       const errMsg = result?.error || "Invalid code or connection failed. Please check and try again.";
       setInviteMsg({ ok: false, msg: errMsg });
@@ -3408,27 +3503,27 @@ export function FriendsView() {
     xp: currentPartner ? (currentPartner.xp || 0) : 0,
     currentStreak: currentPartner ? (currentPartner.streak || 0) : 0,
     longestStreak: currentPartner ? (currentPartner.longestStreak || currentPartner.streak || 0) : 0,
-    healthScore: currentPartner ? (currentPartner.healthScore ?? 65) : 0,
-    careerScore: currentPartner ? (currentPartner.careerScore ?? 70) : 0,
-    productivityScore: currentPartner ? (currentPartner.productivityScore ?? 68) : 0,
-    focusHours: currentPartner ? (currentPartner.focusHours ?? 8.5) : 0,
-    habitCompletion: currentPartner ? (currentPartner.habitCompletion ?? 70) : 0,
-    taskCompletion: currentPartner ? (currentPartner.taskCompletion ?? 65) : 0,
-    studyHours: currentPartner ? (currentPartner.studyHours ?? 10.5) : 0,
-    codingHours: currentPartner ? (currentPartner.codingHours ?? 14.0) : 0,
-    waterIntake: currentPartner ? (currentPartner.waterIntake ?? 7) : 0,
-    sleepHours: currentPartner ? (currentPartner.sleepHours ?? 7) : 0,
-    exercise: currentPartner ? (currentPartner.exercise ?? 40) : 0,
-    mood: currentPartner ? (currentPartner.mood ?? "😊 Good") : "None",
-    achievements: currentPartner ? (currentPartner.habits?.filter(h => h.done).length || 5) : 0,
-    weeklyGoalsDone: currentPartner ? (currentPartner.weeklyGoalsDone ?? 3) : 0,
+    healthScore: currentPartner ? (currentPartner.healthScore ?? 0) : 0,
+    careerScore: currentPartner ? (currentPartner.careerScore ?? 0) : 0,
+    productivityScore: currentPartner ? (currentPartner.productivityScore ?? 0) : 0,
+    focusHours: currentPartner ? (currentPartner.focusHours ?? 0) : 0,
+    habitCompletion: currentPartner ? (currentPartner.habitCompletion ?? 0) : 0,
+    taskCompletion: currentPartner ? (currentPartner.taskCompletion ?? 0) : 0,
+    studyHours: currentPartner ? (currentPartner.studyHours ?? 0) : 0,
+    codingHours: currentPartner ? (currentPartner.codingHours ?? 0) : 0,
+    waterIntake: currentPartner ? (currentPartner.waterIntake ?? 0) : 0,
+    sleepHours: currentPartner ? (currentPartner.sleepHours ?? 0) : 0,
+    exercise: currentPartner ? (currentPartner.exercise ?? 0) : 0,
+    mood: currentPartner ? (currentPartner.mood ?? "None") : "None",
+    achievements: currentPartner ? (currentPartner.habits?.filter(h => h.done).length || 0) : 0,
+    weeklyGoalsDone: currentPartner ? (currentPartner.weeklyGoalsDone ?? 0) : 0,
     weeklyGoalsTotal: currentPartner ? (currentPartner.weeklyGoalsTotal ?? 5) : 0,
-    monthlyGoalsDone: currentPartner ? (currentPartner.monthlyGoalsDone ?? 6) : 0,
+    monthlyGoalsDone: currentPartner ? (currentPartner.monthlyGoalsDone ?? 0) : 0,
     monthlyGoalsTotal: currentPartner ? (currentPartner.monthlyGoalsTotal ?? 10) : 0,
-    completedTasks: currentPartner ? (currentPartner.completedTasks ?? 12) : 0,
-    pendingTasks: currentPartner ? (currentPartner.pendingTasks ?? 4) : 0,
-    currentChallenge: currentPartner ? (currentPartner.currentChallenge ?? "30-Day Consistency") : "None",
-    currentRank: currentPartner ? (currentPartner.currentRank ?? "Silver I") : "Unranked",
+    completedTasks: currentPartner ? (currentPartner.completedTasks ?? 0) : 0,
+    pendingTasks: currentPartner ? (currentPartner.pendingTasks ?? 0) : 0,
+    currentChallenge: currentPartner ? (currentPartner.currentChallenge ?? "None") : "None",
+    currentRank: currentPartner ? (currentPartner.currentRank ?? "Bronze I") : "Unranked",
   };
 
   // Real daily activity progress calculation for current user over past 7 days (Mon-Sun)
@@ -3488,7 +3583,7 @@ export function FriendsView() {
                             tasks.some(t => t.done && t.dueDate === dateKey) ||
                             habits.some(h => h.history && h.history.includes(dateKey));
       const partnerCheckedIn = currentPartner
-        ? (currentPartner.streakHistory?.includes(dateKey) || (currentPartner.weekProgress?.[i % 7] > 10))
+        ? !!(currentPartner.streakHistory && currentPartner.streakHistory.includes(dateKey))
         : false;
       return {
         id: i,
@@ -4013,6 +4108,16 @@ export function FriendsView() {
                   </div>
                   <h3 className="text-sm font-extrabold text-foreground">{partnerProfile.name}</h3>
                   <p className="text-[10px] text-purple-600 dark:text-purple-400 uppercase tracking-widest font-extrabold">{partnerProfile.currentRank}</p>
+                  
+                  {/* Chat Action Button */}
+                  <div className="pt-2 px-1">
+                    <button
+                      onClick={() => setActiveChatUserId(currentPartner.friendUserId || currentPartner.id)}
+                      className="w-full bg-[#5B3765] hover:bg-[#4d2f56] dark:bg-purple-600/20 dark:hover:bg-purple-600/30 text-white dark:text-purple-300 text-[11px] font-bold py-2 rounded-xl border border-transparent dark:border-purple-500/25 flex items-center justify-center gap-1.5 shadow-sm transition-all"
+                    >
+                      <Send size={12} /> Chat with {partnerProfile.name.split(" ")[0]}
+                    </button>
+                  </div>
                 </div>
 
                 <div className="space-y-3.5 text-xs">
@@ -4092,7 +4197,7 @@ export function FriendsView() {
       </div>
 
       {/* FOOTER SECTION: Connect code trigger & Server Validation */}
-      <Card className="p-6 border-border shadow-md bg-card space-y-4">
+<Card className="p-6 border-border shadow-md bg-card space-y-4">
         <div className="flex items-center gap-2.5">
           <Award size={20} className="text-primary" />
           <div>
@@ -4154,6 +4259,317 @@ export function FriendsView() {
           </div>
         </div>
       </Card>
+
+      {/* PENDING FRIEND REQUESTS SECTION */}
+      {(pendingRequests.length > 0 || sentRequests.length > 0) && (
+        <Card className="p-5 border-border bg-card shadow-sm space-y-4">
+          <div className="flex items-center gap-2.5">
+            <Users size={20} className="text-primary" />
+            <div>
+              <h3 className="text-sm font-extrabold tracking-tight">Friend Requests Inbox</h3>
+              <p className="text-foreground/50 text-[10px]">Manage incoming requests or check pending sent requests.</p>
+            </div>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-3 border-t border-border/60">
+            {/* Incoming Requests */}
+            {pendingRequests.length > 0 ? (
+              <div className="space-y-3">
+                <p className="text-xs font-bold text-foreground/60 uppercase tracking-wider">Incoming Requests ({pendingRequests.length})</p>
+                <div className="space-y-2">
+                  {pendingRequests.map(req => (
+                    <div key={req.id} className="p-3 bg-muted/40 rounded-2xl border border-border/50 flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-3">
+                        <Avatar src={req.fromUserId?.avatar} name={req.fromUserId?.name || "User"} size="sm" />
+                        <div>
+                          <p className="text-xs font-bold text-foreground">{req.fromUserId?.name || "Anonymous"}</p>
+                          <p className="text-[10px] text-muted-foreground">Level {req.fromUserId?.level || 1} • Streak {req.fromUserId?.streak || 0}d • {req.fromUserId?.growSyncId}</p>
+                        </div>
+                      </div>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={async () => {
+                            const res = await acceptFriendRequest(req.id);
+                            if (res.ok) {
+                              fetchRequests();
+                            } else {
+                              alert(res.error || "Failed to accept request");
+                            }
+                          }}
+                          className="px-3 py-1.5 bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl text-[10px] font-bold transition-all shadow-sm"
+                        >
+                          Accept
+                        </button>
+                        <button
+                          onClick={async () => {
+                            const res = await rejectFriendRequest(req.id);
+                            if (res.ok) {
+                              fetchRequests();
+                            } else {
+                              alert(res.error || "Failed to reject request");
+                            }
+                          }}
+                          className="px-3 py-1.5 bg-red-500/10 text-red-500 border border-red-500/20 hover:bg-red-500/20 rounded-xl text-[10px] font-bold transition-all"
+                        >
+                          Decline
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <p className="text-xs font-bold text-foreground/60 uppercase tracking-wider">Incoming Requests</p>
+                <p className="text-xs text-muted-foreground/60 italic py-2">No incoming friend requests.</p>
+              </div>
+            )}
+
+            {/* Sent Pending Requests */}
+            {sentRequests.length > 0 ? (
+              <div className="space-y-3">
+                <p className="text-xs font-bold text-foreground/60 uppercase tracking-wider">Sent Requests (Pending)</p>
+                <div className="space-y-2">
+                  {sentRequests.map(req => (
+                    <div key={req.id} className="p-3 bg-muted/40 rounded-2xl border border-border/50 flex items-center justify-between gap-3 opacity-80">
+                      <div className="flex items-center gap-3">
+                        <Avatar src={req.toUserId?.avatar} name={req.toUserId?.name || "User"} size="sm" />
+                        <div>
+                          <p className="text-xs font-bold text-foreground">{req.toUserId?.name || "Anonymous"}</p>
+                          <p className="text-[10px] text-muted-foreground">Level {req.toUserId?.level || 1} • Streak {req.toUserId?.streak || 0}d • {req.toUserId?.growSyncId}</p>
+                        </div>
+                      </div>
+                      <span className="text-[10px] text-amber-500 font-bold bg-amber-500/10 border border-amber-500/20 px-2.5 py-1 rounded-full">
+                        Waiting
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <p className="text-xs font-bold text-foreground/60 uppercase tracking-wider">Sent Requests</p>
+                <p className="text-xs text-muted-foreground/60 italic py-2">No pending sent requests.</p>
+              </div>
+            )}
+          </div>
+        </Card>
+      )}
+
+      {activeChatUserId && (
+        <ChatPanel friendUserId={activeChatUserId} onClose={() => setActiveChatUserId(null)} />
+      )}
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════
+   REAL-TIME CO-OP CHAT PANEL
+   ══════════════════════════════════════════ */
+function ChatPanel({ friendUserId, onClose }: { friendUserId: string; onClose: () => void }) {
+  const { user } = useAuth();
+  const [conversation, setConversation] = useState<any>(null);
+  const [messages, setMessages] = useState<any[]>([]);
+  const [text, setText] = useState("");
+  const [isTyping, setIsTyping] = useState(false);
+  const [partnerTyping, setPartnerTyping] = useState(false);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const typingTimeoutRef = useRef<any>(null);
+
+  // Initialize/Fetch conversation
+  useEffect(() => {
+    if (!friendUserId) return;
+    const initChat = async () => {
+      const conv = await apiFetch<any>("/chat/conversations", {
+        method: "POST",
+        body: JSON.stringify({ friendUserId })
+      });
+      if (conv) {
+        setConversation(conv);
+        const convId = conv.id || conv._id;
+        socket.emit("join_conversation", convId);
+        
+        const msgs = await apiFetch<any[]>(`/chat/conversations/${convId}/messages`);
+        if (Array.isArray(msgs)) {
+          setMessages(msgs);
+        }
+        
+        // Mark seen
+        apiFetch(`/chat/conversations/${convId}/seen`, { method: "PUT" });
+      }
+    };
+    initChat();
+
+    return () => {
+      if (conversation) {
+        const cId = conversation.id || conversation._id;
+        socket.emit("leave_conversation", cId);
+      }
+    };
+  }, [friendUserId, conversation?.id, conversation?._id]);
+
+  // Listen to Socket.io events
+  useEffect(() => {
+    if (!conversation) return;
+    const convId = String(conversation.id || conversation._id);
+    const myId = String(user?.id || (user as any)?._id);
+
+    const handleNewMessage = (msg: any) => {
+      const msgConvId = String(msg.conversationId);
+      if (msgConvId === convId) {
+        setMessages(prev => {
+          if (prev.some(m => String(m.id || m._id) === String(msg.id || msg._id))) return prev;
+          return [...prev, msg];
+        });
+        apiFetch(`/chat/conversations/${convId}/seen`, { method: "PUT" });
+      }
+    };
+
+    const handleTyping = ({ userId, conversationId }: any) => {
+      if (String(conversationId) === convId && String(userId) !== myId) {
+        setPartnerTyping(true);
+      }
+    };
+
+    const handleStopTyping = ({ userId, conversationId }: any) => {
+      if (String(conversationId) === convId && String(userId) !== myId) {
+        setPartnerTyping(false);
+      }
+    };
+
+    socket.on("new_message", handleNewMessage);
+    socket.on("user_typing", handleTyping);
+    socket.on("user_stopped_typing", handleStopTyping);
+
+    return () => {
+      socket.off("new_message", handleNewMessage);
+      socket.off("user_typing", handleTyping);
+      socket.off("user_stopped_typing", handleStopTyping);
+    };
+  }, [conversation, user?.id, (user as any)?._id]);
+
+  // Scroll to bottom on new message
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, partnerTyping]);
+
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setText(e.target.value);
+    
+    if (!conversation || !user) return;
+    const convId = conversation.id || conversation._id;
+    const myId = user.id || (user as any)._id;
+    
+    if (!isTyping) {
+      setIsTyping(true);
+      socket.emit("typing", { conversationId: convId, userId: myId, userName: user.name });
+    }
+
+    if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+    
+    typingTimeoutRef.current = setTimeout(() => {
+      setIsTyping(false);
+      socket.emit("stop_typing", { conversationId: convId, userId: myId });
+    }, 2000);
+  };
+
+  const handleSend = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!text.trim() || !conversation) return;
+    const convId = conversation.id || conversation._id;
+    const myId = user?.id || (user as any)?._id;
+
+    // Stop typing immediately
+    setIsTyping(false);
+    socket.emit("stop_typing", { conversationId: convId, userId: myId });
+
+    const cleanText = text;
+    setText("");
+
+    const newMsg = await apiFetch<any>(`/chat/conversations/${convId}/messages`, {
+      method: "POST",
+      body: JSON.stringify({ text: cleanText })
+    });
+    if (newMsg) {
+      setMessages(prev => {
+        if (prev.some(m => String(m.id || m._id) === String(newMsg.id || newMsg._id))) return prev;
+        return [...prev, newMsg];
+      });
+    }
+  };
+
+  if (!conversation) {
+    return (
+      <div className="fixed bottom-6 right-6 w-80 h-96 bg-card border border-border rounded-2xl shadow-2xl z-50 flex items-center justify-center">
+        <div className="flex flex-col items-center gap-2 text-muted-foreground text-xs">
+          <RefreshCw size={24} className="animate-spin text-primary" />
+          <span>Starting chat session...</span>
+        </div>
+      </div>
+    );
+  }
+
+  const partner = conversation.participants.find((p: any) => p.id !== user?.id) || { name: "Friend" };
+
+  return (
+    <div className="fixed bottom-6 right-6 w-80 h-[450px] bg-card border border-border/80 rounded-2xl shadow-2xl z-50 flex flex-col overflow-hidden animate-fadeIn">
+      {/* Header */}
+      <div className="bg-[#5B3765] dark:bg-[#1e1124] text-white p-3.5 flex justify-between items-center select-none">
+        <div className="flex items-center gap-2">
+          <Avatar src={partner.avatar} name={partner.name} size="sm" />
+          <div className="flex flex-col leading-tight">
+            <span className="text-xs font-bold">{partner.name}</span>
+            <span className="text-[9px] text-white/60">Level {partner.level || 1} • GrowSync Partner</span>
+          </div>
+        </div>
+        <button onClick={onClose} className="w-6 h-6 rounded-full hover:bg-white/10 flex items-center justify-center text-white/80 hover:text-white transition-all">
+          <X size={14} />
+        </button>
+      </div>
+
+      {/* Message Area */}
+      <div className="flex-1 overflow-y-auto p-3 space-y-2 bg-background/50">
+        {messages.map((m) => {
+          const isMe = m.senderId?.id === user?.id || m.senderId === user?.id;
+          return (
+            <div key={m.id} className={`flex ${isMe ? "justify-end" : "justify-start"}`}>
+              <div className={`max-w-[75%] rounded-2xl px-3 py-2 text-xs leading-relaxed ${
+                isMe 
+                  ? "bg-primary text-white rounded-br-none" 
+                  : "bg-muted text-foreground rounded-bl-none border border-border/50"
+              }`}>
+                <p>{m.text}</p>
+                <span className={`text-[8px] block text-right mt-1 opacity-60`}>
+                  {new Date(m.createdAt || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                </span>
+              </div>
+            </div>
+          );
+        })}
+        {partnerTyping && (
+          <div className="flex justify-start">
+            <div className="bg-muted text-muted-foreground rounded-2xl rounded-bl-none px-3 py-2 text-[10px] italic border border-border/50 flex items-center gap-1.5 animate-pulse">
+              <span className="w-1.5 h-1.5 bg-muted-foreground rounded-full animate-bounce" />
+              <span className="w-1.5 h-1.5 bg-muted-foreground rounded-full animate-bounce [animation-delay:0.2s]" />
+              <span className="w-1.5 h-1.5 bg-muted-foreground rounded-full animate-bounce [animation-delay:0.4s]" />
+            </div>
+          </div>
+        )}
+        <div ref={messagesEndRef} />
+      </div>
+
+      {/* Form Input */}
+      <form onSubmit={handleSend} className="p-2.5 border-t border-border bg-card flex gap-2">
+        <input
+          type="text"
+          value={text}
+          onChange={handleInputChange}
+          placeholder="Type your message..."
+          className="flex-1 bg-input border border-border rounded-xl px-3.5 py-2 text-xs text-foreground outline-none focus:border-primary/40 transition-colors"
+        />
+        <button type="submit" disabled={!text.trim()} className="w-8 h-8 rounded-xl bg-primary text-white flex items-center justify-center disabled:opacity-40 hover:opacity-90 active:scale-95 transition-all flex-shrink-0 shadow-sm">
+          <Send size={12} />
+        </button>
+      </form>
     </div>
   );
 }

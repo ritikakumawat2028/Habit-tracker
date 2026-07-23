@@ -1,1 +1,62 @@
-[]
+[
+  {
+    "id": "mock_user_3llhybc",
+    "_id": "6a622c205f0d3ca4a5d94387",
+    "name": "Ritika",
+    "email": "ritika@gmail.com",
+    "bio": "Developing self-improvement habits.",
+    "level": 1,
+    "xp": 15,
+    "coins": 10,
+    "streak": 1,
+    "longestStreak": 1,
+    "growSyncId": "GS-628446",
+    "streakHistory": [
+      "2026-07-23"
+    ],
+    "joinDate": "July 2026",
+    "goals": [
+      "fitness",
+      "hydration",
+      "career",
+      "reading",
+      "coding",
+      "sleep",
+      "selfcare",
+      "productivity",
+      "health",
+      "mental"
+    ],
+    "inviteCode": "GROW-FFYWMO"
+  },
+  {
+    "id": "mock_user_np5w7fi",
+    "_id": "6a622c725f0d3ca4a5d94388",
+    "name": "jiya",
+    "email": "jiya@gmail.com",
+    "bio": "Developing self-improvement habits.",
+    "level": 1,
+    "xp": 15,
+    "coins": 10,
+    "streak": 1,
+    "longestStreak": 1,
+    "growSyncId": "GS-638889",
+    "streakHistory": [
+      "2026-07-23"
+    ],
+    "joinDate": "July 2026",
+    "goals": [
+      "fitness",
+      "career",
+      "hydration",
+      "mental",
+      "health",
+      "reading",
+      "coding",
+      "sleep",
+      "selfcare",
+      "productivity"
+    ],
+    "inviteCode": "GROW-6FYWDQ"
+  }
+]

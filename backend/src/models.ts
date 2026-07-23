@@ -5,9 +5,20 @@ import crypto from 'crypto';
    HELPERS
    ══════════════════════════════════════════ */
 
-/** Generate a cryptographically random 8-char hex code e.g. A3F9B2D1 */
+/** Generate a GROW-XXXXXX style invite code */
 function makeInviteCode(): string {
-  return crypto.randomBytes(4).toString('hex').toUpperCase();
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+  let code = 'GROW-';
+  for (let i = 0; i < 6; i++) {
+    code += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return code;
+}
+
+/** Generate a GS-XXXXXX numeric GrowSync User ID */
+function makeGrowSyncId(): string {
+  const num = Math.floor(100000 + Math.random() * 900000);
+  return `GS-${num}`;
 }
 
 /* ══════════════════════════════════════════
@@ -16,6 +27,8 @@ function makeInviteCode(): string {
 export interface IUser extends Document {
   name: string;
   email: string;
+  password?: string;        // bcrypt hash (optional for backward compat)
+  growSyncId: string;       // unique GS-XXXXXX identifier
   avatar: string | null;
   bio: string;
   level: number;
@@ -43,6 +56,8 @@ export interface IUser extends Document {
 const UserSchema = new Schema<IUser>({
   name: { type: String, required: true },
   email: { type: String, required: true, unique: true },
+  password: { type: String, select: false },   // never returned by default
+  growSyncId: { type: String, unique: true, sparse: true },
   avatar: { type: String, default: null },
   bio: { type: String, default: 'Building better habits, one day at a time. 🚀' },
   level: { type: Number, default: 1 },
@@ -66,15 +81,24 @@ const UserSchema = new Schema<IUser>({
   mood: { type: String, default: '😐 Okay' },
 }, { timestamps: true });
 
-// Auto-assign a unique invite code before first save
+// Auto-assign a unique invite code and growSyncId before first save
 UserSchema.pre('save', async function () {
+  const UserModel = this.constructor as mongoose.Model<IUser>;
+
   if (!this.inviteCode) {
-    const UserModel = this.constructor as mongoose.Model<IUser>;
     let code = makeInviteCode();
     while (await UserModel.exists({ inviteCode: code })) {
       code = makeInviteCode();
     }
     this.inviteCode = code;
+  }
+
+  if (!this.growSyncId) {
+    let gsId = makeGrowSyncId();
+    while (await UserModel.exists({ growSyncId: gsId })) {
+      gsId = makeGrowSyncId();
+    }
+    this.growSyncId = gsId;
   }
 });
 
@@ -84,6 +108,7 @@ UserSchema.set('toJSON', {
     ret.id = ret._id;
     delete ret._id;
     delete ret.__v;
+    delete ret.password; // NEVER expose hash
   }
 });
 
@@ -282,14 +307,14 @@ export const FriendConnection = mongoose.model<IFriendConnection>('FriendConnect
 export interface IFriendRequest extends Document {
   fromUserId: mongoose.Types.ObjectId;
   toUserId: mongoose.Types.ObjectId;
-  status: 'pending' | 'accepted' | 'rejected';
+  status: 'pending' | 'accepted' | 'rejected' | 'cancelled';
   createdAt: string;
 }
 
 const FriendRequestSchema = new Schema<IFriendRequest>({
   fromUserId: { type: Schema.Types.ObjectId, ref: 'User', required: true },
   toUserId: { type: Schema.Types.ObjectId, ref: 'User', required: true },
-  status: { type: String, enum: ['pending', 'accepted', 'rejected'], default: 'pending' },
+  status: { type: String, enum: ['pending', 'accepted', 'rejected', 'cancelled'], default: 'pending' },
   createdAt: { type: String, required: true },
 });
 
@@ -342,6 +367,54 @@ const NotificationSchema = new Schema<INotification>({
 
 NotificationSchema.set('toJSON', { virtuals: true, transform: (doc: any, ret: any) => { ret.id = ret._id; delete ret._id; delete ret.__v; } });
 export const Notification = mongoose.model<INotification>('Notification', NotificationSchema);
+
+/* ══════════════════════════════════════════
+   CONVERSATION MODEL
+   One document per friendship pair (private chat thread)
+   ══════════════════════════════════════════ */
+export interface IConversation extends Document {
+  participants: mongoose.Types.ObjectId[];
+  lastMessageAt: Date;
+  unreadCounts: Map<string, number>;
+}
+
+const ConversationSchema = new Schema<IConversation>({
+  participants: [{ type: Schema.Types.ObjectId, ref: 'User', required: true }],
+  lastMessageAt: { type: Date, default: Date.now },
+  unreadCounts: { type: Map, of: Number, default: {} },
+}, { timestamps: true });
+
+ConversationSchema.index({ participants: 1 });
+ConversationSchema.set('toJSON', { virtuals: true, transform: (doc: any, ret: any) => { ret.id = ret._id; delete ret._id; delete ret.__v; } });
+export const Conversation = mongoose.model<IConversation>('Conversation', ConversationSchema);
+
+/* ══════════════════════════════════════════
+   MESSAGE MODEL
+   Individual chat messages within a conversation
+   ══════════════════════════════════════════ */
+export interface IMessage extends Document {
+  conversationId: mongoose.Types.ObjectId;
+  senderId: mongoose.Types.ObjectId;
+  text: string;
+  seenBy: mongoose.Types.ObjectId[];
+  replyTo?: mongoose.Types.ObjectId;
+  deletedAt?: Date;
+  editedAt?: Date;
+}
+
+const MessageSchema = new Schema<IMessage>({
+  conversationId: { type: Schema.Types.ObjectId, ref: 'Conversation', required: true },
+  senderId: { type: Schema.Types.ObjectId, ref: 'User', required: true },
+  text: { type: String, required: true },
+  seenBy: [{ type: Schema.Types.ObjectId, ref: 'User' }],
+  replyTo: { type: Schema.Types.ObjectId, ref: 'Message' },
+  deletedAt: { type: Date },
+  editedAt: { type: Date },
+}, { timestamps: true });
+
+MessageSchema.index({ conversationId: 1, createdAt: -1 });
+MessageSchema.set('toJSON', { virtuals: true, transform: (doc: any, ret: any) => { ret.id = ret._id; delete ret._id; delete ret.__v; } });
+export const Message = mongoose.model<IMessage>('Message', MessageSchema);
 
 /* ══════════════════════════════════════════
    SHARED ENTITIES (TASKS, HABITS, CHALLENGES)

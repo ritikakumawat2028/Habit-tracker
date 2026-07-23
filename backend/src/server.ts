@@ -39,10 +39,32 @@ export const io = new SocketIOServer(server, {
 
 io.on('connection', (socket) => {
   console.log(`🔌 Socket connected: ${socket.id}`);
-  
-  socket.on('join_user_room', (userId) => {
+
+  // Join personal notification room (userId as room name)
+  socket.on('join_user_room', (userId: string) => {
     socket.join(userId);
     console.log(`User ${userId} joined their personal room.`);
+  });
+
+  // Join a specific conversation room for real-time chat
+  socket.on('join_conversation', (conversationId: string) => {
+    socket.join(`conv_${conversationId}`);
+    console.log(`Socket ${socket.id} joined conversation room: conv_${conversationId}`);
+  });
+
+  // Leave a conversation room
+  socket.on('leave_conversation', (conversationId: string) => {
+    socket.leave(`conv_${conversationId}`);
+  });
+
+  // Typing indicator — broadcast to conversation room (not back to sender)
+  socket.on('typing', ({ conversationId, userId, userName }: { conversationId: string; userId: string; userName: string }) => {
+    socket.to(`conv_${conversationId}`).emit('user_typing', { userId, userName, conversationId });
+  });
+
+  // Stop typing indicator
+  socket.on('stop_typing', ({ conversationId, userId }: { conversationId: string; userId: string }) => {
+    socket.to(`conv_${conversationId}`).emit('user_stopped_typing', { userId, conversationId });
   });
 
   socket.on('disconnect', () => {

@@ -1,0 +1,15 @@
+[
+  {
+    "id": "conv_1784820569334",
+    "_id": "conv_1784820569334",
+    "participants": [
+      "mock_user_np5w7fi",
+      "mock_user_3llhybc"
+    ],
+    "lastMessageAt": "2026-07-23T15:30:17.251Z",
+    "unreadCounts": {
+      "mock_user_np5w7fi": 0,
+      "mock_user_3llhybc": 0
+    }
+  }
+]

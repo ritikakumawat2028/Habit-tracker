@@ -1,0 +1,16 @@
+[
+  {
+    "id": "mock_conn_1784819880417_1",
+    "userId": "mock_user_np5w7fi",
+    "friendUserId": "mock_user_3llhybc",
+    "friendInviteCode": "ACCEPTED",
+    "connectedAt": "2026-07-23T15:18:00.417Z"
+  },
+  {
+    "id": "mock_conn_1784819880417_2",
+    "userId": "mock_user_3llhybc",
+    "friendUserId": "mock_user_np5w7fi",
+    "friendInviteCode": "ACCEPTED",
+    "connectedAt": "2026-07-23T15:18:00.417Z"
+  }
+]

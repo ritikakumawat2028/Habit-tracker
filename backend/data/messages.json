@@ -1,0 +1,38 @@
+[
+  {
+    "id": "msg_1784820573213",
+    "_id": "msg_1784820573213",
+    "conversationId": "conv_1784820569334",
+    "senderId": "mock_user_np5w7fi",
+    "text": "hii",
+    "seenBy": [
+      "mock_user_np5w7fi",
+      "mock_user_3llhybc"
+    ],
+    "createdAt": "2026-07-23T15:29:33.213Z"
+  },
+  {
+    "id": "msg_1784820612934",
+    "_id": "msg_1784820612934",
+    "conversationId": "conv_1784820569334",
+    "senderId": "mock_user_3llhybc",
+    "text": "hello",
+    "seenBy": [
+      "mock_user_3llhybc",
+      "mock_user_np5w7fi"
+    ],
+    "createdAt": "2026-07-23T15:30:12.934Z"
+  },
+  {
+    "id": "msg_1784820617250",
+    "_id": "msg_1784820617250",
+    "conversationId": "conv_1784820569334",
+    "senderId": "mock_user_3llhybc",
+    "text": "kkrh?",
+    "seenBy": [
+      "mock_user_3llhybc",
+      "mock_user_np5w7fi"
+    ],
+    "createdAt": "2026-07-23T15:30:17.250Z"
+  }
+]
