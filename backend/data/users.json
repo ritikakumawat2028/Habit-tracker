@@ -36,7 +36,7 @@
     "email": "jiya@gmail.com",
     "bio": "Developing self-improvement habits.",
     "level": 1,
-    "xp": 15,
+    "xp": 40,
     "coins": 10,
     "streak": 1,
     "longestStreak": 1,
@@ -57,6 +57,9 @@
       "selfcare",
       "productivity"
     ],
-    "inviteCode": "GROW-6FYWDQ"
+    "inviteCode": "GROW-6FYWDQ",
+    "waterIntake": 0,
+    "mood": "😊",
+    "sleepHours": 7.5
   }
 ]

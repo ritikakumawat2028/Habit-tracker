@@ -3448,12 +3448,12 @@ export function FriendsView() {
   const codingHoursNum = Math.round((completedCodingTasks.length * 1.5 + codingFocusMins / 60) * 10) / 10;
   
   const todayLog = healthLogs[0];
-  const waterCups = todayLog ? Math.round((todayLog.waterMl || 0) / 250) : 6;
-  const sleepHrs = todayLog?.sleepHours || 7.5;
-  const exerciseMins = todayLog?.workoutMins || 45;
-  const currentMood = todayLog?.mood || "😄 Great";
+  const waterCups = todayLog ? Math.round((todayLog.waterMl || 0) / 250) : 0;
+  const sleepHrs = todayLog?.sleepHours || 0;
+  const exerciseMins = todayLog?.workoutMins || 0;
+  const currentMood = todayLog?.mood || "None";
   
-  const healthScoreCalc = todayLog ? Math.min(100, Math.round(((todayLog.waterMl || 1500) / 2500 * 50) + ((todayLog.sleepHours || 7) / 8 * 50))) : 85;
+  const healthScoreCalc = todayLog ? Math.min(100, Math.round(((todayLog.waterMl || 0) / 2500 * 50) + ((todayLog.sleepHours || 0) / 8 * 50))) : 0;
   const thisMonth = new Date().toISOString().slice(0, 7);
   const monthSessions = focusSessions.filter(s => (s.date || "").startsWith(thisMonth));
   const totalStudyMins = monthSessions.reduce((acc, s) => acc + (s.duration || 0), 0);
@@ -4508,7 +4508,11 @@ function ChatPanel({ friendUserId, onClose }: { friendUserId: string; onClose: (
     );
   }
 
-  const partner = conversation.participants.find((p: any) => p.id !== user?.id) || { name: "Friend" };
+  const partner = conversation.participants.find((p: any) => {
+    const myId = user?.id || (user as any)?._id;
+    const pId = p.id || p._id;
+    return String(pId) !== String(myId);
+  }) || { name: "Friend" };
 
   return (
     <div className="fixed bottom-6 right-6 w-80 h-[450px] bg-card border border-border/80 rounded-2xl shadow-2xl z-50 flex flex-col overflow-hidden animate-fadeIn">
@@ -4529,7 +4533,9 @@ function ChatPanel({ friendUserId, onClose }: { friendUserId: string; onClose: (
       {/* Message Area */}
       <div className="flex-1 overflow-y-auto p-3 space-y-2 bg-background/50">
         {messages.map((m) => {
-          const isMe = m.senderId?.id === user?.id || m.senderId === user?.id;
+          const myId = user?.id || (user as any)?._id;
+          const sId = m.senderId?.id || m.senderId?._id || m.senderId;
+          const isMe = String(sId) === String(myId);
           return (
             <div key={m.id} className={`flex ${isMe ? "justify-end" : "justify-start"}`}>
               <div className={`max-w-[75%] rounded-2xl px-3 py-2 text-xs leading-relaxed ${
