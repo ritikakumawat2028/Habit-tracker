@@ -3581,9 +3581,12 @@ export function FriendsView() {
       const dateKey = d.toISOString().split("T")[0];
       const userCheckedIn = (user.streakHistory && user.streakHistory.includes(dateKey)) ||
                             tasks.some(t => t.done && t.dueDate === dateKey) ||
-                            habits.some(h => h.history && h.history.includes(dateKey));
+                            habits.some(h => h.history && h.history.includes(dateKey)) ||
+                            focusSessions.some(s => s.date === dateKey) ||
+                            healthLogs.some(l => l.date === dateKey);
       const partnerCheckedIn = currentPartner
-        ? !!(currentPartner.streakHistory && currentPartner.streakHistory.includes(dateKey))
+        ? !!((currentPartner.activeDates && currentPartner.activeDates.includes(dateKey)) ||
+             (currentPartner.streakHistory && currentPartner.streakHistory.includes(dateKey)))
         : false;
       return {
         id: i,
@@ -3591,7 +3594,7 @@ export function FriendsView() {
         friend: partnerCheckedIn
       };
     });
-  }, [user.streakHistory, tasks, habits, currentPartner]);
+  }, [user.streakHistory, tasks, habits, focusSessions, healthLogs, currentPartner]);
 
   // Trigger social cheers activity
   const sendSocialReaction = (type: string) => {

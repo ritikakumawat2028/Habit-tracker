@@ -234,6 +234,31 @@ function calculateWeekProgress(userId: string, tasks: any[], habits: any[], focu
   return result;
 }
 
+function calculateActiveDates(userId: string, tasks: any[], habits: any[], focusSessions: any[], healthLogs: any[]): string[] {
+  const activeSet = new Set<string>();
+  tasks.forEach(t => {
+    if (String(t.userId) === String(userId) && t.done && t.dueDate) {
+      activeSet.add(t.dueDate);
+    }
+  });
+  habits.forEach(h => {
+    if (String(h.userId) === String(userId) && Array.isArray(h.history)) {
+      h.history.forEach((d: string) => activeSet.add(d));
+    }
+  });
+  focusSessions.forEach(s => {
+    if (String(s.userId) === String(userId) && s.date) {
+      activeSet.add(s.date);
+    }
+  });
+  healthLogs.forEach(l => {
+    if (String(l.userId) === String(userId) && l.date) {
+      activeSet.add(l.date);
+    }
+  });
+  return Array.from(activeSet);
+}
+
 function buildLocalPartnerPayload(friendUser: any, connectionId: string) {
   const fid = friendUser.id || friendUser._id;
   const localHabits = loadLocalHabits().filter(h => String(h.userId) === String(fid));
@@ -250,6 +275,7 @@ function buildLocalPartnerPayload(friendUser: any, connectionId: string) {
   const taskCompletion = totalTasks > 0 ? Math.round((doneTasks / totalTasks) * 100) : 0;
   
   const weekProgress = calculateWeekProgress(fid, localTasks, localHabits, localFocus);
+  const activeDates = calculateActiveDates(fid, localTasks, localHabits, localFocus, localHealth);
 
   const todayStr = new Date().toISOString().split('T')[0];
   const todayLog = localHealth.find(h => h.date === todayStr) || localHealth[0];
@@ -288,6 +314,7 @@ function buildLocalPartnerPayload(friendUser: any, connectionId: string) {
     habits: localHabits.map(h => ({ name: h.name, icon: h.icon, done: h.completedToday, streak: h.streak, consistencyScore: h.consistencyScore || 100 })),
     tasks: localTasks.slice(0, 10).map(t => ({ title: t.title, done: t.done, priority: t.priority, difficulty: t.difficulty || 'Medium' })),
     weekProgress,
+    activeDates,
     healthScore,
     careerScore,
     productivityScore,
@@ -353,6 +380,7 @@ async function buildPartnerPayload(friendUser: any, connectionId: string) {
   const taskCompletion = totalTasks > 0 ? Math.round((doneTasks / totalTasks) * 100) : 0;
   
   const weekProgress = calculateWeekProgress(fid, tasks, habits, focusSessions);
+  const activeDates = calculateActiveDates(fid, tasks, habits, focusSessions, healthLogs);
 
   const todayStr = new Date().toISOString().split('T')[0];
   const todayLog = healthLogs.find(h => h.date === todayStr) || healthLogs[0];
@@ -391,6 +419,7 @@ async function buildPartnerPayload(friendUser: any, connectionId: string) {
     habits: habits.map(h => ({ name: h.name, icon: h.icon, done: h.completedToday, streak: h.streak, consistencyScore: h.consistencyScore || 100 })),
     tasks: tasks.slice(0, 10).map(t => ({ title: t.title, done: t.done, priority: t.priority, difficulty: t.difficulty || 'Medium' })),
     weekProgress,
+    activeDates,
     healthScore,
     careerScore,
     productivityScore,
