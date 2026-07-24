@@ -4625,7 +4625,33 @@ export function ProfileView({ onNavigate }: { onNavigate: (v: View) => void }) {
     const file = e.target.files?.[0];
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = ev => { updateUser({ avatar: ev.target?.result as string }); };
+    reader.onload = ev => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement("canvas");
+        const MAX_SIZE = 500;
+        let width = img.width;
+        let height = img.height;
+        if (width > height) {
+          if (width > MAX_SIZE) {
+            height *= MAX_SIZE / width;
+            width = MAX_SIZE;
+          }
+        } else {
+          if (height > MAX_SIZE) {
+            width *= MAX_SIZE / height;
+            height = MAX_SIZE;
+          }
+        }
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext("2d");
+        ctx?.drawImage(img, 0, 0, width, height);
+        const dataUrl = canvas.toDataURL("image/jpeg", 0.8);
+        updateUser({ avatar: dataUrl });
+      };
+      img.src = ev.target?.result as string;
+    };
     reader.readAsDataURL(file);
   };
 
