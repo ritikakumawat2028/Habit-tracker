@@ -4629,7 +4629,7 @@ export function ProfileView({ onNavigate }: { onNavigate: (v: View) => void }) {
       const img = new Image();
       img.onload = () => {
         const canvas = document.createElement("canvas");
-        const MAX_SIZE = 500;
+        const MAX_SIZE = 150; // Aggressive downsize to fit inside 100kb Express limit safely
         let width = img.width;
         let height = img.height;
         if (width > height) {
@@ -4647,7 +4647,7 @@ export function ProfileView({ onNavigate }: { onNavigate: (v: View) => void }) {
         canvas.height = height;
         const ctx = canvas.getContext("2d");
         ctx?.drawImage(img, 0, 0, width, height);
-        const dataUrl = canvas.toDataURL("image/jpeg", 0.8);
+        const dataUrl = canvas.toDataURL("image/jpeg", 0.5); // 50% quality to ensure tiny base64 string
         updateUser({ avatar: dataUrl });
       };
       img.src = ev.target?.result as string;
