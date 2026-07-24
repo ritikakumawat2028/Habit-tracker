@@ -4674,11 +4674,18 @@ export function ProfileView({ onNavigate }: { onNavigate: (v: View) => void }) {
       {/* avatar + basic info */}
       <Card className="p-6">
         <div className="flex flex-col md:flex-row items-center md:items-start gap-6">
-          <div className="relative flex-shrink-0">
+          <div className="flex flex-col items-center gap-3 flex-shrink-0">
             <Avatar src={user.avatar} name={user.name} size="xl" className="ring-4 ring-primary/20" />
-            <button onClick={() => fileRef.current?.click()} className="absolute -bottom-1 -right-1 w-8 h-8 rounded-full bg-gradient-to-br from-violet-500 to-pink-500 flex items-center justify-center text-white shadow-lg hover:scale-105 transition-transform">
-              <Camera size={14} />
-            </button>
+            <div className="flex items-center gap-2">
+              <button onClick={() => fileRef.current?.click()} className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white/10 hover:bg-white/20 text-xs text-white transition-colors border border-white/10">
+                <Pencil size={12} /> Edit
+              </button>
+              {user.avatar && (
+                <button onClick={() => updateUser({ avatar: null })} className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-red-500/10 hover:bg-red-500/20 text-xs text-red-400 transition-colors border border-red-500/20">
+                  <Trash2 size={12} /> Delete
+                </button>
+              )}
+            </div>
             <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={handleAvatar} />
           </div>
 
